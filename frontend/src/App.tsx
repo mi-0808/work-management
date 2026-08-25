@@ -235,10 +235,20 @@ function Onboarding({ email, onDone }: { email: string; onDone: () => void }) {
   // 「会社を作る＝管理者になる」ことが伝わらないと、従業員が自分の会社を量産してしまう
   const [choice, setChoice] = useState<'none' | 'create' | 'invited'>('none')
   const [name, setName] = useState('')
+  const [code, setCode] = useState('')
   const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
 
   const create = async () => {
     const { error } = await supabase.from('companies').insert({ name })
+    if (error) return setErr(error.message)
+    onDone()
+  }
+
+  const join = async () => {
+    setErr(''); setBusy(true)
+    const { error } = await supabase.rpc('join_company', { code })
+    setBusy(false)
     if (error) return setErr(error.message)
     onDone()
   }
@@ -270,18 +280,20 @@ function Onboarding({ email, onDone }: { email: string; onDone: () => void }) {
   if (choice === 'invited') return (
     <div className="auth">
       <div className="card">
-        <h2>招待を待っています</h2>
-        <p className="onb-lead">
-          まだ招待が見つかりませんでした。管理者に、次のメールアドレスで名簿へ登録してもらってください。
-        </p>
-        <div className="onb-email">{email}</div>
-        <p className="onb-lead">
-          登録が済んだらこのページを再読み込みすると参加できます。<br />
-          別のアドレスで招待されている場合は、そのアドレスでログインし直してください。
-        </p>
-        <button className="btn-primary" style={{ width: '100%' }} onClick={() => location.reload()}>
-          再読み込みして確認
+        <h2>会社に参加</h2>
+        <p className="onb-lead">管理者から共有された参加コードを入力してください。</p>
+        <label htmlFor="onb-code">参加コード</label>
+        <input id="onb-code" className="code-input" type="text" placeholder="ABC123" autoFocus
+          maxLength={6} value={code}
+          onChange={(e) => { setCode(e.target.value.toUpperCase()); setErr('') }} />
+        {err && <div className="notice warn">{err}</div>}
+        <button className="btn-primary" style={{ width: '100%' }}
+          disabled={code.length < 6 || busy} onClick={join}>
+          {busy ? '参加中…' : '参加する'}
         </button>
+        <div className="notice">
+          コードが分からない場合は、管理者に <b>{email}</b> で名簿へ登録してもらってから、このページを再読み込みしても参加できます
+        </div>
         <div className="auth-links">
           <button onClick={() => setChoice('none')}>戻る</button>
           <button onClick={() => supabase.auth.signOut()}>ログアウト</button>
@@ -726,6 +738,8 @@ const BLANK_INVITE = {
 
 function Members({ me }: { me: Member }) {
   const [members, setMembers] = useState<Member[]>([])
+  const [code, setCode] = useState('')
+  const [copied, setCopied] = useState(false)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(BLANK_INVITE)
@@ -733,12 +747,21 @@ function Members({ me }: { me: Member }) {
   const isAdmin = me.role === 'admin'
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from('members').select('*')
-      .eq('company_id', me.company_id).order('created_at')
-    setMembers(data ?? [])
+    const [{ data: rows }, { data: company }] = await Promise.all([
+      supabase.from('members').select('*').eq('company_id', me.company_id).order('created_at'),
+      supabase.from('companies').select('join_code').eq('id', me.company_id).maybeSingle(),
+    ])
+    setMembers(rows ?? [])
+    setCode(company?.join_code ?? '')
   }, [me.company_id])
 
   useEffect(() => { load() }, [load])
+
+  const copyCode = async () => {
+    await navigator.clipboard.writeText(code)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
 
   const changeHours = async (m: Member, key: 'work_start' | 'work_end', value: string) => {
     setMembers(members.map((x) => (x.id === m.id ? { ...x, [key]: value } : x)))
@@ -776,6 +799,20 @@ function Members({ me }: { me: Member }) {
 
   return (
     <>
+      {isAdmin && (
+        <div className="card">
+          <h2>参加コード <span className="tag">メンバーに共有</span></h2>
+          <div className="join-code-row">
+            <div className="join-code">{code || '—'}</div>
+            <button className="btn-outline" onClick={copyCode}>{copied ? 'コピーしました' : 'コピー'}</button>
+          </div>
+          <div className="notice">
+            このコードを伝えれば、相手が自分でアカウントを作って参加できます。
+            メールアドレスを事前に聞く必要はありません（参加した人は「一般」として追加されます）
+          </div>
+        </div>
+      )}
+
       <div className="card">
         <h2>メンバー名簿 <span className="tag">{members.length}名</span></h2>
         {members.map((m, i) => (
@@ -869,8 +906,9 @@ function Members({ me }: { me: Member }) {
 
           {err && <div className="notice warn">{err}</div>}
           <div className="notice">
-            登録したメールアドレスでアカウントを作成（またはログイン）すると、自動でこの会社に参加します。
-            社外メンバーは本人の Google アカウントでも構いません
+            メールアドレスが分かっている人向けです。登録したアドレスでアカウントを作成すると自動で参加し、
+            ここで設定した名前と所定勤務時間帯が引き継がれます。
+            アドレスが分からない場合は上の参加コードを共有してください
           </div>
           <div className="form-actions">
             <button className="btn-primary" style={{ margin: 0 }}
