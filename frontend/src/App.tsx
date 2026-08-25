@@ -246,6 +246,7 @@ function Home({ me }: { me: Member }) {
   const [att, setAtt] = useState<Attendance | null>(null)
   const [week, setWeek] = useState<Attendance[]>([])
   const [plan, setPlan] = useState('')
+  const [err, setErr] = useState('')
 
   const load = useCallback(async () => {
     const { data } = await supabase
@@ -264,16 +265,21 @@ function Home({ me }: { me: Member }) {
 
   const status = att?.clock_out ? '退勤済み' : att?.clock_in ? '勤務中' : '未出勤'
 
-  const punchIn = async () => {
-    await supabase.from('attendances').upsert(
-      { member_id: me.id, work_date: today(), clock_in: new Date().toISOString(), plan },
+  // 保存は必ず結果を確認する。黙って失敗すると打刻が消えたように見えるため
+  const save = async (patch: Partial<Attendance>) => {
+    setErr('')
+    const { error } = await supabase.from('attendances').upsert(
+      { member_id: me.id, work_date: today(), plan, ...patch },
       { onConflict: 'member_id,work_date' },
     )
+    if (error) return setErr(`保存できませんでした（${error.message}）。ログインし直してもう一度お試しください`)
     load()
   }
 
+  const punchIn = () => save({ clock_in: new Date().toISOString() })
+
   // 退勤のみ → 出勤を所定開始時刻で自動補完
-  const punchOut = async () => {
+  const punchOut = () => {
     const patch: Partial<Attendance> = { clock_out: new Date().toISOString() }
     if (!att?.clock_in) {
       const d = new Date()
@@ -282,20 +288,10 @@ function Home({ me }: { me: Member }) {
       patch.clock_in = d.toISOString()
       patch.auto_in = true
     }
-    await supabase.from('attendances').upsert(
-      { member_id: me.id, work_date: today(), plan, ...patch },
-      { onConflict: 'member_id,work_date' },
-    )
-    load()
+    return save(patch)
   }
 
-  const savePlan = async () => {
-    await supabase.from('attendances').upsert(
-      { member_id: me.id, work_date: today(), plan },
-      { onConflict: 'member_id,work_date' },
-    )
-    load()
-  }
+  const savePlan = () => save({})
 
   return (
     <>
@@ -307,6 +303,7 @@ function Home({ me }: { me: Member }) {
           {now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </div>
         <div className="status-chip"><span className="dot" />{status}</div>
+        {err && <div className="notice warn" style={{ position: 'relative', zIndex: 1 }}>{err}</div>}
         <div className="punch-row">
           <button className="btn btn-in" disabled={!!att?.clock_in} onClick={punchIn}>
             {att?.clock_in ? `出勤 ${fmtTime(att.clock_in)}` : '出勤する'}
@@ -365,6 +362,7 @@ function Report({ me }: { me: Member }) {
   const [plan, setTodayPlan] = useState<string | null>(null)
   const [history, setHistory] = useState<ReportRow[]>([])
   const [saved, setSaved] = useState(false)
+  const [err, setErr] = useState('')
 
   const load = useCallback(async () => {
     const [{ data: reports }, { data: att }] = await Promise.all([
@@ -381,10 +379,12 @@ function Report({ me }: { me: Member }) {
   useEffect(() => { load() }, [load])
 
   const submit = async () => {
-    await supabase.from('daily_reports').upsert(
+    setErr('')
+    const { error } = await supabase.from('daily_reports').upsert(
       { member_id: me.id, work_date: today(), body },
       { onConflict: 'member_id,work_date' },
     )
+    if (error) return setErr(`提出できませんでした（${error.message}）`)
     setSaved(true)
     load()
   }
@@ -400,6 +400,7 @@ function Report({ me }: { me: Member }) {
         <label>業務内容（実績）</label>
         <textarea placeholder="今日行った業務を入力" value={body}
           onChange={(e) => { setBody(e.target.value); setSaved(false) }} />
+        {err && <div className="notice warn">{err}</div>}
         <button className="btn-primary" disabled={!body || saved} onClick={submit}>
           {saved ? '提出済み ✓' : '日報を提出'}
         </button>
@@ -439,6 +440,7 @@ function Schedule({ me }: { me: Member }) {
   const [title, setTitle] = useState('')
   const [meet, setMeet] = useState(true)
   const [dragFrom, setDragFrom] = useState<number | null>(null)
+  const [err, setErr] = useState('')
 
   const load = useCallback(async () => {
     const from = new Date(year, month, 1).toISOString()
@@ -497,10 +499,12 @@ function Schedule({ me }: { me: Member }) {
   const add = async () => {
     if (!draft) return
     const mk = (t: string) => new Date(year, month, selDay, ...t.split(':').map(Number) as [number, number]).toISOString()
-    await supabase.from('schedules').insert({
+    setErr('')
+    const { error } = await supabase.from('schedules').insert({
       company_id: me.company_id, member_id: me.id, title,
       starts_at: mk(draft.start), ends_at: mk(draft.end), with_meet: meet,
     })
+    if (error) return setErr(`予定を保存できませんでした（${error.message}）`)
     setDraft(null); setTitle(''); setMeet(true)
     load()
   }
@@ -584,6 +588,7 @@ function Schedule({ me }: { me: Member }) {
               <input type="checkbox" checked={meet} onChange={(e) => setMeet(e.target.checked)} style={{ width: 'auto' }} />
               Google Meet のリンクを付ける
             </label>
+            {err && <div className="notice warn">{err}</div>}
             <button className="btn-primary" disabled={!title || !!conflict} onClick={add}>
               追加してカレンダーに同期
             </button>
