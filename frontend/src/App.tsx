@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isProviderEnabled, supabase, today } from './lib/supabase'
-import type { Attendance, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
+import type { Attendance, Break, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
 
 type Tab = 'home' | 'report' | 'schedule' | 'members'
 
@@ -12,6 +12,24 @@ const toMin = (t: string) => {
   const [h, m] = t.split(':').map(Number)
   return h * 60 + m
 }
+
+// 休憩の合計（分）。終了していない休憩は今まで経過した分を数える
+const breakMinutes = (breaks: Break[] = [], now = Date.now()) =>
+  breaks.reduce((sum, b) => {
+    const end = b.ended_at ? new Date(b.ended_at).getTime() : now
+    return sum + Math.max(0, end - new Date(b.started_at).getTime())
+  }, 0) / 60000
+
+// 実働 = 退勤 - 出勤 - 休憩合計
+const workedMinutes = (a: Attendance, now = Date.now()) => {
+  if (!a.clock_in) return 0
+  const end = a.clock_out ? new Date(a.clock_out).getTime() : now
+  const gross = (end - new Date(a.clock_in).getTime()) / 60000
+  return Math.max(0, gross - breakMinutes(a.breaks, now))
+}
+
+const asHm = (min: number) => `${Math.floor(min / 60)}時間${String(Math.round(min % 60)).padStart(2, '0')}分`
+const workedLabel = (a: Attendance) => asHm(workedMinutes(a))
 
 function useClock() {
   const [now, setNow] = useState(new Date())
@@ -251,7 +269,7 @@ function Home({ me }: { me: Member }) {
   const load = useCallback(async () => {
     const { data } = await supabase
       .from('attendances')
-      .select('*')
+      .select('*, breaks(*)')
       .eq('member_id', me.id)
       .order('work_date', { ascending: false })
       .limit(7)
@@ -263,7 +281,10 @@ function Home({ me }: { me: Member }) {
 
   useEffect(() => { load() }, [load])
 
-  const status = att?.clock_out ? '退勤済み' : att?.clock_in ? '勤務中' : '未出勤'
+  const openBreak = att?.breaks?.find((b) => !b.ended_at) ?? null
+  const status = openBreak ? '中抜け中'
+    : att?.clock_out ? '退勤済み'
+    : att?.clock_in ? '勤務中' : '未出勤'
 
   // 保存は必ず結果を確認する。黙って失敗すると打刻が消えたように見えるため
   const save = async (patch: Partial<Attendance>) => {
@@ -291,7 +312,28 @@ function Home({ me }: { me: Member }) {
     return save(patch)
   }
 
+  // 退勤後にまた稼働する場合。退勤時刻を消して勤務中に戻す
+  const resume = () => save({ clock_out: null })
+
   const savePlan = () => save({})
+
+  // 中抜け（ランチ・私用など）。1日に何回でも
+  const startBreak = async () => {
+    if (!att) return
+    setErr('')
+    const { error } = await supabase.from('breaks').insert({ attendance_id: att.id })
+    if (error) return setErr(`休憩を開始できませんでした（${error.message}）`)
+    load()
+  }
+
+  const endBreak = async () => {
+    if (!openBreak) return
+    setErr('')
+    const { error } = await supabase.from('breaks')
+      .update({ ended_at: new Date().toISOString() }).eq('id', openBreak.id)
+    if (error) return setErr(`休憩を終了できませんでした（${error.message}）`)
+    load()
+  }
 
   return (
     <>
@@ -308,10 +350,26 @@ function Home({ me }: { me: Member }) {
           <button className="btn btn-in" disabled={!!att?.clock_in} onClick={punchIn}>
             {att?.clock_in ? `出勤 ${fmtTime(att.clock_in)}` : '出勤する'}
           </button>
-          <button className="btn btn-out" disabled={!!att?.clock_out} onClick={punchOut}>
-            {att?.clock_out ? `退勤 ${fmtTime(att.clock_out)}` : '退勤する'}
-          </button>
+          {att?.clock_out ? (
+            <button className="btn btn-out" onClick={resume}>勤務を再開</button>
+          ) : (
+            <button className="btn btn-out" disabled={!!openBreak} onClick={punchOut}>退勤する</button>
+          )}
         </div>
+        {att?.clock_in && !att.clock_out && (
+          <div className="punch-row" style={{ marginTop: 10 }}>
+            {openBreak ? (
+              <button className="btn btn-break-end" onClick={endBreak}>
+                中抜けを終了（{fmtTime(openBreak.started_at)}〜）
+              </button>
+            ) : (
+              <button className="btn btn-break" onClick={startBreak}>中抜け・休憩を開始</button>
+            )}
+          </div>
+        )}
+        {att?.clock_out && (
+          <div className="hero-note">退勤 {fmtTime(att.clock_out)}・実働 {workedLabel(att)}</div>
+        )}
       </div>
 
       <div className="card">
@@ -329,20 +387,25 @@ function Home({ me }: { me: Member }) {
         {week.length === 0 ? <div className="empty">まだ勤怠記録がありません</div> : (
           <table>
             <thead>
-              <tr><th>日付</th><th>出勤</th><th>退勤</th><th>状態</th></tr>
+              <tr><th>日付</th><th>出勤</th><th>退勤</th><th>中抜け</th><th>実働</th><th>状態</th></tr>
             </thead>
             <tbody>
-              {week.map((a) => (
-                <tr key={a.id}>
-                  <td>{a.work_date.slice(5).replace('-', '/')}</td>
-                  <td>{fmtTime(a.clock_in)}</td>
-                  <td>{fmtTime(a.clock_out)}</td>
-                  <td>
-                    {(a.auto_in || a.auto_out) && <span className="badge badge-yellow">自動補完</span>}{' '}
-                    <span className="badge badge-blue">{a.clock_out ? '退勤済み' : a.clock_in ? '勤務中' : '—'}</span>
-                  </td>
-                </tr>
-              ))}
+              {week.map((a) => {
+                const bm = breakMinutes(a.breaks)
+                return (
+                  <tr key={a.id}>
+                    <td>{a.work_date.slice(5).replace('-', '/')}</td>
+                    <td>{fmtTime(a.clock_in)}</td>
+                    <td>{fmtTime(a.clock_out)}</td>
+                    <td>{bm > 0 ? `${Math.round(bm)}分` : '—'}</td>
+                    <td>{a.clock_in ? workedLabel(a) : '—'}</td>
+                    <td>
+                      {(a.auto_in || a.auto_out) && <span className="badge badge-yellow">自動補完</span>}{' '}
+                      <span className="badge badge-blue">{a.clock_out ? '退勤済み' : a.clock_in ? '勤務中' : '—'}</span>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}

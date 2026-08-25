@@ -40,6 +40,15 @@ export type Attendance = {
   auto_in: boolean
   auto_out: boolean
   plan: string | null
+  breaks?: Break[]
+}
+
+export type Break = {
+  id: string
+  attendance_id: string
+  started_at: string
+  ended_at: string | null
+  note: string | null
 }
 
 export type Schedule = {
