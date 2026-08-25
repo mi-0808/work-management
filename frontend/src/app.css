@@ -191,6 +191,12 @@ tr:last-child td { border-bottom: none; }
   border-radius: 999px; background: var(--blue-600); color: #fff; vertical-align: middle;
 }
 .m-hours-label { display: block; font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+.role-select {
+  width: auto; padding: 4px 24px 4px 10px; font-size: 11px; font-weight: 700;
+  border-radius: 999px; border: 1px solid var(--line); background: #f1f5f9;
+  color: var(--muted); cursor: pointer;
+}
+.role-select.is-admin { background: var(--blue-100); color: var(--blue-700); border-color: var(--blue-100); }
 .form-actions { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
 
 @media (max-width: 560px) {

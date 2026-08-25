@@ -746,6 +746,20 @@ function Members({ me }: { me: Member }) {
     if (error) setErr('所定時間を変更できませんでした')
   }
 
+  const changeRole = async (m: Member, role: Member['role']) => {
+    setErr('')
+    const { error } = await supabase.from('members').update({ role }).eq('id', m.id)
+    if (error) return setErr(error.message)
+    load()
+  }
+
+  const changeType = async (m: Member, member_type: Member['member_type']) => {
+    setErr('')
+    const { error } = await supabase.from('members').update({ member_type }).eq('id', m.id)
+    if (error) return setErr('区分を変更できませんでした')
+    load()
+  }
+
   const invite = async () => {
     setErr(''); setBusy(true)
     const { error } = await supabase.from('members').insert({ company_id: me.company_id, ...form })
@@ -775,10 +789,27 @@ function Members({ me }: { me: Member }) {
               </div>
               <div className="m-mail">{m.email}</div>
               <div className="member-tags">
-                <span className={`badge ${m.member_type === 'internal' ? 'badge-blue' : 'badge-yellow'}`}>
-                  {m.member_type === 'internal' ? '社内' : '社外'}
-                </span>
-                <span className="badge badge-gray">{m.role === 'admin' ? '管理者' : '一般'}</span>
+                {isAdmin ? (
+                  <>
+                    <select className="role-select" value={m.member_type}
+                      onChange={(e) => changeType(m, e.target.value as Member['member_type'])}>
+                      <option value="internal">社内</option>
+                      <option value="external">社外</option>
+                    </select>
+                    <select className={`role-select ${m.role === 'admin' ? 'is-admin' : ''}`} value={m.role}
+                      onChange={(e) => changeRole(m, e.target.value as Member['role'])}>
+                      <option value="member">一般</option>
+                      <option value="admin">管理者</option>
+                    </select>
+                  </>
+                ) : (
+                  <>
+                    <span className={`badge ${m.member_type === 'internal' ? 'badge-blue' : 'badge-yellow'}`}>
+                      {m.member_type === 'internal' ? '社内' : '社外'}
+                    </span>
+                    <span className="badge badge-gray">{m.role === 'admin' ? '管理者' : '一般'}</span>
+                  </>
+                )}
                 {m.status === 'invited' && <span className="badge badge-yellow">招待中・未参加</span>}
               </div>
             </div>
@@ -797,6 +828,12 @@ function Members({ me }: { me: Member }) {
         {err && <div className="notice warn">{err}</div>}
         {isAdmin && !open && (
           <button className="btn-primary" onClick={() => setOpen(true)}>＋ メンバーを招待</button>
+        )}
+        {isAdmin && (
+          <div className="notice">
+            管理者はメンバーの招待、区分・権限・所定勤務時間帯の変更ができます。
+            会社を管理できなくなるのを防ぐため、実際に参加している管理者が自分だけの間は一般に変更できません
+          </div>
         )}
       </div>
 
