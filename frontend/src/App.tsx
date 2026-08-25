@@ -3,7 +3,7 @@ import type { Session } from '@supabase/supabase-js'
 import { isProviderEnabled, supabase, today } from './lib/supabase'
 import type { Attendance, Break, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
 
-type Tab = 'home' | 'report' | 'schedule' | 'members'
+type Tab = 'home' | 'report' | 'schedule' | 'members' | 'profile'
 
 const fmtTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'
@@ -731,53 +731,123 @@ function Members({ me }: { me: Member }) {
   )
 }
 
-/* ---------- アカウントメニュー ---------- */
-function AccountMenu({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
-  const [open, setOpen] = useState(false)
+/* ---------- プロフィール・設定 ---------- */
+function Profile({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
   const [name, setName] = useState(me.name)
   const [password, setPassword] = useState('')
   const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+  const [providers, setProviders] = useState<string[]>([])
+  const [googleOk, setGoogleOk] = useState(false)
 
-  const save = async () => {
-    // 自分の名前変更は管理者でなくても許可したいが、RLSは管理者のみなので自分用ポリシーで対応済み
+  const loadIdentities = useCallback(async () => {
+    const { data } = await supabase.auth.getUserIdentities()
+    setProviders((data?.identities ?? []).map((i) => i.provider))
+  }, [])
+
+  useEffect(() => {
+    loadIdentities()
+    isProviderEnabled('google').then(setGoogleOk)
+  }, [loadIdentities])
+
+  const googleLinked = providers.includes('google')
+
+  const saveName = async () => {
+    setErr(''); setMsg('')
+    // 本人による自分のレコード更新はRLSの members_self_update で許可済み
     const { error } = await supabase.from('members').update({ name }).eq('id', me.id)
-    if (error) setMsg('名前を変更できませんでした')
-    else { onRename(name); setOpen(false) }
+    if (error) return setErr('名前を変更できませんでした')
+    onRename(name)
+    setMsg('名前を保存しました')
   }
 
   const changePassword = async () => {
+    setErr(''); setMsg('')
     const { error } = await supabase.auth.updateUser({ password })
-    setMsg(error ? authError(error.message) : 'パスワードを変更しました')
-    if (!error) setPassword('')
+    if (error) return setErr(authError(error.message))
+    setPassword('')
+    setMsg('パスワードを変更しました')
+  }
+
+  const linkGoogle = async () => {
+    setErr('')
+    const { error } = await supabase.auth.linkIdentity({
+      provider: 'google', options: { redirectTo: location.origin },
+    })
+    if (error) setErr(authError(error.message))
+  }
+
+  const unlinkGoogle = async () => {
+    setErr(''); setMsg('')
+    const { data } = await supabase.auth.getUserIdentities()
+    const identity = data?.identities?.find((i) => i.provider === 'google')
+    if (!identity) return
+    const { error } = await supabase.auth.unlinkIdentity(identity)
+    if (error) return setErr(authError(error.message))
+    loadIdentities()
+    setMsg('Googleの連携を解除しました')
   }
 
   return (
-    <div style={{ position: 'relative' }}>
-      <button className="avatar" title="アカウント" onClick={() => setOpen(!open)}>{me.name[0]}</button>
-      {open && (
-        <div className="account-menu">
-          <label>名前</label>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} />
-          <div className="account-mail">{me.email}</div>
-          <div className="account-badges">
-            <span className={`badge ${me.member_type === 'internal' ? 'badge-blue' : 'badge-yellow'}`}>
-              {me.member_type === 'internal' ? '社内' : '社外'}
-            </span>
-            <span className="badge badge-gray">{me.role === 'admin' ? '管理者' : '一般'}</span>
-            <span className="badge badge-gray">所定 {hm(me.work_start)}–{hm(me.work_end)}</span>
+    <>
+      <div className="card">
+        <div className="profile-head">
+          <div className="m-avatar profile-avatar">{me.name[0]}</div>
+          <div>
+            <div className="profile-name">{me.name}</div>
+            <div className="m-mail">{me.email}</div>
+            <div className="account-badges">
+              <span className={`badge ${me.member_type === 'internal' ? 'badge-blue' : 'badge-yellow'}`}>
+                {me.member_type === 'internal' ? '社内' : '社外'}
+              </span>
+              <span className="badge badge-gray">{me.role === 'admin' ? '管理者' : '一般'}</span>
+              <span className="badge badge-gray">所定 {hm(me.work_start)}–{hm(me.work_end)}</span>
+            </div>
           </div>
-          <button className="btn-primary" disabled={!name || name === me.name} onClick={save}>名前を保存</button>
-          <label htmlFor="ac-pw">新しいパスワード</label>
-          <input id="ac-pw" type="password" autoComplete="new-password" placeholder="8文字以上"
-            value={password} onChange={(e) => setPassword(e.target.value)} />
-          <button className="btn-primary" disabled={password.length < 8} onClick={changePassword}>
-            パスワードを変更
-          </button>
-          {msg && <div className="notice">{msg}</div>}
-          <button className="btn-logout" onClick={() => supabase.auth.signOut()}>ログアウト</button>
         </div>
-      )}
-    </div>
+        {me.role !== 'admin' && (
+          <div className="notice">所定勤務時間帯の変更は管理者に依頼してください（打刻漏れ時の自動補完に使われます）</div>
+        )}
+      </div>
+
+      <div className="card">
+        <h2>外部サービス連携</h2>
+        <div className="link-row">
+          <div className="link-info">
+            <GoogleLogo />
+            <div>
+              <div className="link-title">Google アカウント</div>
+              <div className="link-desc">
+                {googleLinked ? '連携済み。カレンダーとMeetに利用します'
+                  : googleOk ? '連携するとGoogleログインとカレンダー連携が使えます'
+                  : 'Googleログインが未設定です。管理者にご確認ください'}
+              </div>
+            </div>
+          </div>
+          {googleLinked
+            ? <button className="btn-outline" onClick={unlinkGoogle}>解除</button>
+            : <button className="btn-primary" style={{ margin: 0 }} disabled={!googleOk} onClick={linkGoogle}>連携する</button>}
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>アカウント設定</h2>
+        <label htmlFor="pf-name">名前</label>
+        <input id="pf-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
+        <button className="btn-primary" disabled={!name || name === me.name} onClick={saveName}>名前を保存</button>
+
+        <label htmlFor="pf-pw">新しいパスワード</label>
+        <input id="pf-pw" type="password" autoComplete="new-password" placeholder="8文字以上"
+          value={password} onChange={(e) => setPassword(e.target.value)} />
+        <button className="btn-primary" disabled={password.length < 8} onClick={changePassword}>
+          パスワードを変更
+        </button>
+
+        {msg && <div className="notice">{msg}</div>}
+        {err && <div className="notice warn">{err}</div>}
+        <button className="btn-logout" onClick={() => supabase.auth.signOut()}>ログアウト</button>
+      </div>
+    </>
   )
 }
 
@@ -804,13 +874,21 @@ const ICONS: Record<Tab, React.ReactNode> = {
       <path d="M16 5.5a3.5 3.5 0 0 1 0 6.6" /><path d="M17.5 15.5c2.2.6 3.6 2.1 4 4.5" />
     </svg>
   ),
+  profile: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" />
+    </svg>
+  ),
 }
 
-const TABS: { key: Tab; label: string }[] = [
+// 管理者は名簿、一般はプロフィールを4つ目に置く（管理者はアバターからプロフィールへ）
+const tabsFor = (role: Member['role']): { key: Tab; label: string }[] => [
   { key: 'home', label: 'ホーム' },
   { key: 'report', label: '日報' },
   { key: 'schedule', label: '予定' },
-  { key: 'members', label: '名簿' },
+  role === 'admin'
+    ? { key: 'members', label: '名簿' }
+    : { key: 'profile', label: 'プロフィール' },
 ]
 
 export default function App() {
@@ -876,7 +954,12 @@ export default function App() {
             <button className="brand-edit" title="会社名・アイコンを変更" onClick={editBrand}>✎</button>
           )}
         </div>
-        {me && <AccountMenu me={me} onRename={(name) => setMe({ ...me, name })} />}
+        {me && (
+          <button className={`avatar ${tab === 'profile' ? 'sel' : ''}`} title="プロフィール・設定"
+            onClick={() => setTab('profile')}>
+            {me.name[0]}
+          </button>
+        )}
       </header>
 
       {loading ? <div className="empty">読み込み中…</div>
@@ -889,8 +972,9 @@ export default function App() {
             {tab === 'report' && <Report me={me} />}
             {tab === 'schedule' && <Schedule me={me} />}
             {tab === 'members' && <Members me={me} />}
+            {tab === 'profile' && <Profile me={me} onRename={(name) => setMe({ ...me, name })} />}
             <nav className="tabbar">
-              {TABS.map((t) => (
+              {tabsFor(me.role).map((t) => (
                 <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => setTab(t.key)}>
                   <span className="icon">{ICONS[t.key]}</span>{t.label}
                 </button>
