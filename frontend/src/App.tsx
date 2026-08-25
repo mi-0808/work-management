@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { supabase, today } from './lib/supabase'
+import { isProviderEnabled, supabase, today } from './lib/supabase'
 import type { Attendance, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
 
 type Tab = 'home' | 'report' | 'schedule' | 'members'
@@ -22,61 +22,192 @@ function useClock() {
   return now
 }
 
-/* ---------- ログイン ---------- */
-function Login() {
-  const [email, setEmail] = useState('')
-  const [code, setCode] = useState('')
-  const [sent, setSent] = useState(false)
-  const [err, setErr] = useState('')
+/* ---------- 認証 ---------- */
+const GoogleLogo = () => (
+  <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden>
+    <path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.7-.4-4H24v7.3h12.1c-.2 2-1.6 5-4.5 7l6.9 5.3c4.1-3.8 6.6-9.4 6.6-15.6z" />
+    <path fill="#34A853" d="M24 46c5.9 0 10.9-2 14.5-5.3l-6.9-5.3c-1.8 1.3-4.3 2.2-7.6 2.2-5.8 0-10.7-3.8-12.5-9.900l-7.1 5.5C8.1 40.6 15.4 46 24 46z" />
+    <path fill="#FBBC05" d="M11.5 27.7c-.5-1.4-.7-2.9-.7-4.5s.3-3.1.7-4.5l-7.1-5.5C2.9 16.3 2 20 2 23.2s.9 6.9 2.4 10l7.1-5.5z" />
+    <path fill="#EA4335" d="M24 9.5c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 3.3 29.9 1 24 1 15.4 1 8.1 6.4 4.4 13.2l7.1 5.5C13.3 13.3 18.2 9.5 24 9.5z" />
+  </svg>
+)
 
-  const google = () =>
-    supabase.auth.signInWithOAuth({
+// Supabaseのエラーを日本語に
+const authError = (message: string) => {
+  const m = message.toLowerCase()
+  if (m.includes('invalid login credentials')) return 'メールアドレスまたはパスワードが違います'
+  if (m.includes('email not confirmed')) return 'メールアドレスが未確認です。確認メールのリンクを開いてください'
+  if (m.includes('user already registered')) return 'このメールアドレスは既に登録されています'
+  if (m.includes('password should be at least')) return 'パスワードは8文字以上にしてください'
+  if (m.includes('rate limit') || m.includes('too many')) return '試行回数が多すぎます。しばらく待ってから再度お試しください'
+  if (m.includes('provider is not enabled')) return 'Googleログインは未設定です。管理者に連絡してください'
+  return message
+}
+
+type AuthMode = 'signin' | 'signup' | 'reset'
+
+function Auth() {
+  const [mode, setMode] = useState<AuthMode>('signin')
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [err, setErr] = useState('')
+  const [info, setInfo] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [googleOk, setGoogleOk] = useState(false)
+
+  useEffect(() => { isProviderEnabled('google').then(setGoogleOk) }, [])
+
+  const reset = (next: AuthMode) => { setMode(next); setErr(''); setInfo('') }
+
+  // OAuth・メールリンクの失敗はURL（?query か #hash）に載って戻ってくる
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || location.hash.replace(/^#/, ''))
+    const code = params.get('error')
+    if (!code) return
+    const desc = params.get('error_description') ?? ''
+    setErr(
+      code === 'server_error' && desc.toLowerCase().includes('provider')
+        ? 'Googleログインがまだ有効になっていません（Supabaseの設定が必要です）'
+        : desc ? authError(desc) : `ログインに失敗しました（${code}）`,
+    )
+    history.replaceState(null, '', location.pathname)
+  }, [])
+
+  const google = async () => {
+    setErr('')
+    const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: location.origin },
     })
-
-  const sendCode = async () => {
-    setErr('')
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: location.origin },
-    })
-    if (error) return setErr(error.message)
-    setSent(true)
+    if (error) setErr(authError(error.message))
   }
 
-  const verify = async () => {
-    setErr('')
-    const { error } = await supabase.auth.verifyOtp({ email, token: code, type: 'email' })
-    if (error) setErr('コードが違うか期限切れです。再送信してください')
+  const submit = async () => {
+    setErr(''); setInfo(''); setBusy(true)
+    try {
+      if (mode === 'signin') {
+        const { error } = await supabase.auth.signInWithPassword({ email, password })
+        if (error) setErr(authError(error.message))
+        return
+      }
+      if (mode === 'signup') {
+        if (password.length < 8) return setErr('パスワードは8文字以上にしてください')
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { full_name: name }, emailRedirectTo: location.origin },
+        })
+        if (error) return setErr(authError(error.message))
+        // 既存ユーザーの再登録はidentitiesが空で返る（存在を漏らさないSupabaseの仕様）
+        if (data.user && data.user.identities?.length === 0) {
+          return setErr('このメールアドレスは既に登録されています。ログインしてください')
+        }
+        if (!data.session) setInfo('確認メールを送信しました。メール内のリンクを開くと登録が完了します')
+        return
+      }
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: location.origin })
+      if (error) return setErr(authError(error.message))
+      setInfo('パスワード再設定用のメールを送信しました')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const canSubmit =
+    !!email && (mode === 'reset' || password.length >= (mode === 'signup' ? 8 : 1)) &&
+    (mode !== 'signup' || !!name)
+
+  return (
+    <div className="auth">
+      <div className="card">
+        <div className="brand" style={{ justifyContent: 'center', marginBottom: 4 }}>
+          <span className="brand-mark">勤</span>Kintai
+        </div>
+        <p className="auth-lead">
+          {mode === 'signin' ? 'アカウントにログイン'
+            : mode === 'signup' ? '新しいアカウントを作成'
+            : 'パスワードを再設定します'}
+        </p>
+
+        {mode !== 'reset' && googleOk && (
+          <>
+            <button className="btn-google" onClick={google}>
+              <GoogleLogo />Google で{mode === 'signup' ? '登録' : 'ログイン'}
+            </button>
+            <div className="auth-divider"><span>または</span></div>
+          </>
+        )}
+
+        <form onSubmit={(e) => { e.preventDefault(); submit() }}>
+          {mode === 'signup' && (
+            <>
+              <label htmlFor="au-name">名前</label>
+              <input id="au-name" type="text" autoComplete="name" placeholder="山田 太郎"
+                value={name} onChange={(e) => setName(e.target.value)} />
+            </>
+          )}
+          <label htmlFor="au-email">メールアドレス</label>
+          <input id="au-email" type="email" autoComplete="email" placeholder="you@example.com"
+            value={email} onChange={(e) => setEmail(e.target.value)} />
+          {mode !== 'reset' && (
+            <>
+              <label htmlFor="au-pw">パスワード</label>
+              <input id="au-pw" type="password" placeholder={mode === 'signup' ? '8文字以上' : ''}
+                autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                value={password} onChange={(e) => setPassword(e.target.value)} />
+            </>
+          )}
+
+          {err && <div className="notice warn">{err}</div>}
+          {info && <div className="notice">{info}</div>}
+
+          <button className="btn-primary" style={{ width: '100%' }} disabled={!canSubmit || busy}>
+            {busy ? '処理中…'
+              : mode === 'signin' ? 'ログイン'
+              : mode === 'signup' ? 'アカウントを作成'
+              : '再設定メールを送信'}
+          </button>
+        </form>
+
+        <div className="auth-links">
+          {mode === 'signin' && (
+            <>
+              <button onClick={() => reset('reset')}>パスワードを忘れた</button>
+              <button onClick={() => reset('signup')}>アカウントを作成</button>
+            </>
+          )}
+          {mode === 'signup' && <button onClick={() => reset('signin')}>ログインに戻る</button>}
+          {mode === 'reset' && <button onClick={() => reset('signin')}>ログインに戻る</button>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ---------- パスワード再設定（メールのリンクから戻ってきた直後） ---------- */
+function NewPassword({ onDone }: { onDone: () => void }) {
+  const [password, setPassword] = useState('')
+  const [err, setErr] = useState('')
+
+  const save = async () => {
+    if (password.length < 8) return setErr('パスワードは8文字以上にしてください')
+    const { error } = await supabase.auth.updateUser({ password })
+    if (error) return setErr(authError(error.message))
+    onDone()
   }
 
   return (
-    <div className="card" style={{ marginTop: 60, textAlign: 'center' }}>
-      <div className="brand" style={{ justifyContent: 'center', marginBottom: 16 }}>
-        <span className="brand-mark">勤</span>Kintai
+    <div className="auth">
+      <div className="card">
+        <h2>新しいパスワードを設定</h2>
+        <label htmlFor="np-pw">新しいパスワード</label>
+        <input id="np-pw" type="password" autoComplete="new-password" placeholder="8文字以上"
+          value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+        {err && <div className="notice warn">{err}</div>}
+        <button className="btn-primary" style={{ width: '100%' }}
+          disabled={password.length < 8} onClick={save}>パスワードを変更</button>
       </div>
-      <button className="btn-primary" style={{ width: '100%' }} onClick={google}>
-        Google でログイン
-      </button>
-      <label style={{ textAlign: 'left', marginTop: 20 }}>または開発用: メールで認証コードを受け取る</label>
-      <input type="text" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-      {sent && (
-        <>
-          <label style={{ textAlign: 'left' }}>メールに届いた6桁コード</label>
-          <input type="text" placeholder="123456" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
-        </>
-      )}
-      {err && <div className="notice warn">{err}</div>}
-      {!sent ? (
-        <button className="btn-primary" disabled={!email} onClick={sendCode}>認証コードを送信</button>
-      ) : (
-        <>
-          <button className="btn-primary" disabled={code.length < 6} onClick={verify}>ログイン</button>
-          <button className="btn-primary" style={{ background: 'var(--blue-100)', color: 'var(--blue-700)', marginLeft: 8 }}
-            onClick={sendCode}>再送信</button>
-        </>
-      )}
     </div>
   )
 }
@@ -536,12 +667,20 @@ function Members({ me }: { me: Member }) {
 function AccountMenu({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState(me.name)
+  const [password, setPassword] = useState('')
+  const [msg, setMsg] = useState('')
 
   const save = async () => {
     // 自分の名前変更は管理者でなくても許可したいが、RLSは管理者のみなので自分用ポリシーで対応済み
     const { error } = await supabase.from('members').update({ name }).eq('id', me.id)
-    if (error) alert('名前を変更できませんでした')
+    if (error) setMsg('名前を変更できませんでした')
     else { onRename(name); setOpen(false) }
+  }
+
+  const changePassword = async () => {
+    const { error } = await supabase.auth.updateUser({ password })
+    setMsg(error ? authError(error.message) : 'パスワードを変更しました')
+    if (!error) setPassword('')
   }
 
   return (
@@ -560,6 +699,13 @@ function AccountMenu({ me, onRename }: { me: Member; onRename: (name: string) =>
             <span className="badge badge-gray">所定 {hm(me.work_start)}–{hm(me.work_end)}</span>
           </div>
           <button className="btn-primary" disabled={!name || name === me.name} onClick={save}>名前を保存</button>
+          <label htmlFor="ac-pw">新しいパスワード</label>
+          <input id="ac-pw" type="password" autoComplete="new-password" placeholder="8文字以上"
+            value={password} onChange={(e) => setPassword(e.target.value)} />
+          <button className="btn-primary" disabled={password.length < 8} onClick={changePassword}>
+            パスワードを変更
+          </button>
+          {msg && <div className="notice">{msg}</div>}
           <button className="btn-logout" onClick={() => supabase.auth.signOut()}>ログアウト</button>
         </div>
       )}
@@ -605,6 +751,7 @@ export default function App() {
   const [me, setMe] = useState<Member | null>(null)
   const [company, setCompany] = useState<{ id: string; name: string; icon: string } | null>(null)
   const [loading, setLoading] = useState(true)
+  const [recovering, setRecovering] = useState(false)
 
   const loadMe = useCallback(async (s: Session | null) => {
     if (!s) { setMe(null); setCompany(null); setLoading(false); return }
@@ -641,7 +788,8 @@ export default function App() {
       setSession(data.session)
       loadMe(data.session)
     })
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+      if (event === 'PASSWORD_RECOVERY') setRecovering(true)
       setSession(s)
       loadMe(s)
     })
@@ -650,7 +798,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="header">
+      <header className="header" style={{ visibility: me ? 'visible' : 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <button className="brand" onClick={() => setTab('home')}>
             <span className="brand-mark">{company?.icon ?? '勤'}</span>
@@ -664,7 +812,8 @@ export default function App() {
       </header>
 
       {loading ? <div className="empty">読み込み中…</div>
-        : !session ? <Login />
+        : recovering ? <NewPassword onDone={() => setRecovering(false)} />
+        : !session ? <Auth />
         : !me ? <Onboarding onDone={() => loadMe(session)} />
         : (
           <>

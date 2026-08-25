@@ -1,10 +1,22 @@
 import { createClient } from '@supabase/supabase-js'
 
 // publishableキーは公開前提の値なのでフォールバックを直書きしてOK
-export const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL ?? 'https://mqnbptyufvbktlirzzrr.supabase.co',
-  import.meta.env.VITE_SUPABASE_KEY ?? 'sb_publishable_lg_RRTGRh_aT-eTT_hydeA_U07NQAqi',
-)
+export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? 'https://mqnbptyufvbktlirzzrr.supabase.co'
+export const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY ?? 'sb_publishable_lg_RRTGRh_aT-eTT_hydeA_U07NQAqi'
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
+
+// 有効なOAuthプロバイダを問い合わせる。未設定のプロバイダに遷移すると
+// Supabaseが素のJSONエラーを返して戻れなくなるため、事前に確認して出し分ける
+export const isProviderEnabled = async (provider: string) => {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/settings`, { headers: { apikey: SUPABASE_KEY } })
+    const settings = await res.json()
+    return settings?.external?.[provider] === true
+  } catch {
+    return false
+  }
+}
 
 export type Member = {
   id: string
