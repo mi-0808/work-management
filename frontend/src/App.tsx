@@ -231,7 +231,9 @@ function NewPassword({ onDone }: { onDone: () => void }) {
 }
 
 /* ---------- 会社作成オンボーディング ---------- */
-function Onboarding({ onDone }: { onDone: () => void }) {
+function Onboarding({ email, onDone }: { email: string; onDone: () => void }) {
+  // 「会社を作る＝管理者になる」ことが伝わらないと、従業員が自分の会社を量産してしまう
+  const [choice, setChoice] = useState<'none' | 'create' | 'invited'>('none')
   const [name, setName] = useState('')
   const [err, setErr] = useState('')
 
@@ -241,19 +243,69 @@ function Onboarding({ onDone }: { onDone: () => void }) {
     onDone()
   }
 
+  if (choice === 'none') return (
+    <div className="auth">
+      <div className="card">
+        <h2>ようこそ</h2>
+        <p className="onb-lead">
+          <b>{email}</b> でログインしました。<br />
+          どちらの立場か選んでください。
+        </p>
+        <button className="onb-choice" onClick={() => setChoice('create')}>
+          <div className="onb-choice-title">会社を新しく作る</div>
+          <div className="onb-choice-desc">
+            あなたが<b>管理者</b>になります。メンバーの招待、権限や勤務時間の管理ができます
+          </div>
+        </button>
+        <button className="onb-choice" onClick={() => setChoice('invited')}>
+          <div className="onb-choice-title">会社に招待されている</div>
+          <div className="onb-choice-desc">
+            従業員として参加します。管理者に名簿へ登録してもらう必要があります
+          </div>
+        </button>
+      </div>
+    </div>
+  )
+
+  if (choice === 'invited') return (
+    <div className="auth">
+      <div className="card">
+        <h2>招待を待っています</h2>
+        <p className="onb-lead">
+          まだ招待が見つかりませんでした。管理者に、次のメールアドレスで名簿へ登録してもらってください。
+        </p>
+        <div className="onb-email">{email}</div>
+        <p className="onb-lead">
+          登録が済んだらこのページを再読み込みすると参加できます。<br />
+          別のアドレスで招待されている場合は、そのアドレスでログインし直してください。
+        </p>
+        <button className="btn-primary" style={{ width: '100%' }} onClick={() => location.reload()}>
+          再読み込みして確認
+        </button>
+        <div className="auth-links">
+          <button onClick={() => setChoice('none')}>戻る</button>
+          <button onClick={() => supabase.auth.signOut()}>ログアウト</button>
+        </div>
+      </div>
+    </div>
+  )
+
   return (
-    <div className="card" style={{ marginTop: 60 }}>
-      <h2>会社を作成</h2>
-      <p style={{ fontSize: 13, color: 'var(--muted)' }}>
-        まだどの会社にも所属していません。会社を作成すると、あなたが管理者になります。
-        招待を受けている場合は、招待メールのアドレスでログインし直してください。
-      </p>
-      <label>会社名</label>
-      <input type="text" placeholder="例: 株式会社サンプル" value={name} onChange={(e) => setName(e.target.value)} />
-      {err && <div className="notice warn">{err}</div>}
-      <button className="btn-primary" disabled={!name} onClick={create}>
-        会社を作成して始める
-      </button>
+    <div className="auth">
+      <div className="card">
+        <h2>会社を作成</h2>
+        <p className="onb-lead">作成すると、あなたがこの会社の管理者になります。</p>
+        <label>会社名</label>
+        <input type="text" placeholder="例: 株式会社サンプル" autoFocus
+          value={name} onChange={(e) => setName(e.target.value)} />
+        {err && <div className="notice warn">{err}</div>}
+        <button className="btn-primary" style={{ width: '100%' }} disabled={!name} onClick={create}>
+          作成して始める
+        </button>
+        <div className="auth-links">
+          <button onClick={() => setChoice('none')}>戻る</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -666,9 +718,18 @@ function Schedule({ me }: { me: Member }) {
 /* ---------- 名簿 ---------- */
 const AVATAR_COLORS = ['#2563eb', '#0b2a6b', '#eab308', '#94a3b8', '#0891b2', '#7c3aed']
 
+const BLANK_INVITE = {
+  name: '', email: '',
+  member_type: 'internal' as Member['member_type'],
+  work_start: '09:00', work_end: '18:00',
+}
+
 function Members({ me }: { me: Member }) {
   const [members, setMembers] = useState<Member[]>([])
   const [err, setErr] = useState('')
+  const [open, setOpen] = useState(false)
+  const [form, setForm] = useState(BLANK_INVITE)
+  const [busy, setBusy] = useState(false)
   const isAdmin = me.role === 'admin'
 
   const load = useCallback(async () => {
@@ -682,52 +743,108 @@ function Members({ me }: { me: Member }) {
   const changeHours = async (m: Member, key: 'work_start' | 'work_end', value: string) => {
     setMembers(members.map((x) => (x.id === m.id ? { ...x, [key]: value } : x)))
     const { error } = await supabase.from('members').update({ [key]: value }).eq('id', m.id)
-    if (error) setErr('所定時間の変更は管理者のみ可能です')
+    if (error) setErr('所定時間を変更できませんでした')
   }
 
   const invite = async () => {
-    const name = prompt('メンバーの名前は？')
-    if (!name) return
-    const email = prompt('メールアドレスは？（このアドレスのGoogleアカウントでログインすると連携されます）')
-    if (!email) return
-    const external = confirm('社外メンバーですか？（OK=社外 / キャンセル=社内）')
-    const { error } = await supabase.from('members').insert({
-      company_id: me.company_id, name, email,
-      member_type: external ? 'external' : 'internal',
-    })
-    if (error) setErr(error.message)
+    setErr(''); setBusy(true)
+    const { error } = await supabase.from('members').insert({ company_id: me.company_id, ...form })
+    setBusy(false)
+    if (error) {
+      return setErr(error.code === '23505'
+        ? 'このメールアドレスは既に名簿に登録されています'
+        : `招待できませんでした（${error.message}）`)
+    }
+    setForm(BLANK_INVITE)
+    setOpen(false)
     load()
   }
 
   return (
-    <div className="card">
-      <h2>メンバー名簿 <span className="tag">Googleアカウント連携</span></h2>
-      {members.map((m, i) => (
-        <div key={m.id} className="member">
-          <div className="m-avatar" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
-            {m.name[0]}
+    <>
+      <div className="card">
+        <h2>メンバー名簿 <span className="tag">{members.length}名</span></h2>
+        {members.map((m, i) => (
+          <div key={m.id} className="member-row">
+            <div className="m-avatar member-av" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
+              {m.name[0]}
+            </div>
+            <div className="m-info">
+              <div className="m-name">
+                {m.name}{m.id === me.id && <span className="you">あなた</span>}
+              </div>
+              <div className="m-mail">{m.email}</div>
+              <div className="member-tags">
+                <span className={`badge ${m.member_type === 'internal' ? 'badge-blue' : 'badge-yellow'}`}>
+                  {m.member_type === 'internal' ? '社内' : '社外'}
+                </span>
+                <span className="badge badge-gray">{m.role === 'admin' ? '管理者' : '一般'}</span>
+                {m.status === 'invited' && <span className="badge badge-yellow">招待中・未参加</span>}
+              </div>
+            </div>
+            <div className="m-hours">
+              <span className="m-hours-label">所定勤務</span>
+              <div>
+                <input type="time" value={hm(m.work_start)} disabled={!isAdmin}
+                  onChange={(e) => changeHours(m, 'work_start', e.target.value)} />
+                <span> – </span>
+                <input type="time" value={hm(m.work_end)} disabled={!isAdmin}
+                  onChange={(e) => changeHours(m, 'work_end', e.target.value)} />
+              </div>
+            </div>
           </div>
-          <div className="m-info">
-            <div className="m-name">{m.name}{m.id === me.id && '（自分）'}</div>
-            <div className="m-mail">{m.status === 'invited' ? `${m.email}（招待中）` : m.email}</div>
+        ))}
+        {err && <div className="notice warn">{err}</div>}
+        {isAdmin && !open && (
+          <button className="btn-primary" onClick={() => setOpen(true)}>＋ メンバーを招待</button>
+        )}
+      </div>
+
+      {isAdmin && open && (
+        <div className="card">
+          <h2>メンバーを招待</h2>
+          <label htmlFor="iv-name">名前</label>
+          <input id="iv-name" type="text" placeholder="山田 太郎" autoFocus
+            value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+
+          <label htmlFor="iv-mail">メールアドレス</label>
+          <input id="iv-mail" type="email" placeholder="you@example.com"
+            value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+
+          <label>区分</label>
+          <div className="preset-row">
+            {(['internal', 'external'] as const).map((t) => (
+              <button key={t} className={`preset-chip ${form.member_type === t ? 'sel' : ''}`}
+                onClick={() => setForm({ ...form, member_type: t })}>
+                {t === 'internal' ? '社内' : '社外（バイト等）'}
+              </button>
+            ))}
           </div>
-          <div className="m-hours">
-            <input type="time" value={hm(m.work_start)} disabled={!isAdmin}
-              onChange={(e) => changeHours(m, 'work_start', e.target.value)} />
+
+          <label>所定勤務時間帯</label>
+          <div className="draft-times">
+            <input type="time" value={form.work_start}
+              onChange={(e) => setForm({ ...form, work_start: e.target.value })} />
             <span>–</span>
-            <input type="time" value={hm(m.work_end)} disabled={!isAdmin}
-              onChange={(e) => changeHours(m, 'work_end', e.target.value)} />
+            <input type="time" value={form.work_end}
+              onChange={(e) => setForm({ ...form, work_end: e.target.value })} />
           </div>
-          <span className={`badge ${m.member_type === 'internal' ? 'badge-blue' : 'badge-yellow'}`}>
-            {m.member_type === 'internal' ? '社内' : '社外'}
-          </span>
-          <span className="badge badge-gray">{m.role === 'admin' ? '管理者' : '一般'}</span>
+
+          {err && <div className="notice warn">{err}</div>}
+          <div className="notice">
+            登録したメールアドレスでアカウントを作成（またはログイン）すると、自動でこの会社に参加します。
+            社外メンバーは本人の Google アカウントでも構いません
+          </div>
+          <div className="form-actions">
+            <button className="btn-primary" style={{ margin: 0 }}
+              disabled={!form.name || !form.email || busy} onClick={invite}>
+              {busy ? '登録中…' : '名簿に追加'}
+            </button>
+            <button className="btn-outline" onClick={() => { setOpen(false); setErr('') }}>キャンセル</button>
+          </div>
         </div>
-      ))}
-      {err && <div className="notice warn">{err}</div>}
-      {isAdmin && <button className="btn-primary" onClick={invite}>＋ メンバーを招待</button>}
-      <div className="notice">社外メンバーは登録したメールの Google アカウントでログインすると連携されます。時刻は所定勤務時間帯（打刻漏れ時の自動補完に使用）</div>
-    </div>
+      )}
+    </>
   )
 }
 
@@ -965,7 +1082,7 @@ export default function App() {
       {loading ? <div className="empty">読み込み中…</div>
         : recovering ? <NewPassword onDone={() => setRecovering(false)} />
         : !session ? <Auth />
-        : !me ? <Onboarding onDone={() => loadMe(session)} />
+        : !me ? <Onboarding email={session.user.email ?? ''} onDone={() => loadMe(session)} />
         : (
           <>
             {tab === 'home' && <Home me={me} />}
