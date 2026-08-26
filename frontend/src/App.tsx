@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isProviderEnabled, supabase, today } from './lib/supabase'
+import { DEMO, DEMO_MEMBERS } from './lib/demo'
 import type { Attendance, Break, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
 
 type Tab = 'home' | 'report' | 'schedule' | 'members' | 'profile'
@@ -197,6 +198,9 @@ function Auth() {
           )}
           {mode === 'signup' && <button onClick={() => reset('signin')}>ログインに戻る</button>}
           {mode === 'reset' && <button onClick={() => reset('signin')}>ログインに戻る</button>}
+        </div>
+        <div className="auth-links">
+          <a href="/demo">アカウントなしでデモを見る</a>
         </div>
       </div>
     </div>
@@ -730,11 +734,7 @@ function Schedule({ me }: { me: Member }) {
 /* ---------- 名簿 ---------- */
 const AVATAR_COLORS = ['#2563eb', '#0b2a6b', '#eab308', '#94a3b8', '#0891b2', '#7c3aed']
 
-const BLANK_INVITE = {
-  name: '', email: '',
-  member_type: 'internal' as Member['member_type'],
-  work_start: '09:00', work_end: '18:00',
-}
+const BLANK_INVITE = { name: '', email: '', work_start: '09:00', work_end: '18:00' }
 
 function Members({ me }: { me: Member }) {
   const [members, setMembers] = useState<Member[]>([])
@@ -773,13 +773,6 @@ function Members({ me }: { me: Member }) {
     setErr('')
     const { error } = await supabase.from('members').update({ role }).eq('id', m.id)
     if (error) return setErr(error.message)
-    load()
-  }
-
-  const changeType = async (m: Member, member_type: Member['member_type']) => {
-    setErr('')
-    const { error } = await supabase.from('members').update({ member_type }).eq('id', m.id)
-    if (error) return setErr('区分を変更できませんでした')
     load()
   }
 
@@ -827,25 +820,13 @@ function Members({ me }: { me: Member }) {
               <div className="m-mail">{m.email}</div>
               <div className="member-tags">
                 {isAdmin ? (
-                  <>
-                    <select className="role-select" value={m.member_type}
-                      onChange={(e) => changeType(m, e.target.value as Member['member_type'])}>
-                      <option value="internal">社内</option>
-                      <option value="external">社外</option>
-                    </select>
-                    <select className={`role-select ${m.role === 'admin' ? 'is-admin' : ''}`} value={m.role}
-                      onChange={(e) => changeRole(m, e.target.value as Member['role'])}>
-                      <option value="member">一般</option>
-                      <option value="admin">管理者</option>
-                    </select>
-                  </>
+                  <select className={`role-select ${m.role === 'admin' ? 'is-admin' : ''}`} value={m.role}
+                    onChange={(e) => changeRole(m, e.target.value as Member['role'])}>
+                    <option value="member">一般</option>
+                    <option value="admin">管理者</option>
+                  </select>
                 ) : (
-                  <>
-                    <span className={`badge ${m.member_type === 'internal' ? 'badge-blue' : 'badge-yellow'}`}>
-                      {m.member_type === 'internal' ? '社内' : '社外'}
-                    </span>
-                    <span className="badge badge-gray">{m.role === 'admin' ? '管理者' : '一般'}</span>
-                  </>
+                  <span className="badge badge-gray">{m.role === 'admin' ? '管理者' : '一般'}</span>
                 )}
                 {m.status === 'invited' && <span className="badge badge-yellow">招待中・未参加</span>}
               </div>
@@ -868,7 +849,7 @@ function Members({ me }: { me: Member }) {
         )}
         {isAdmin && (
           <div className="notice">
-            管理者はメンバーの招待、区分・権限・所定勤務時間帯の変更ができます。
+            管理者はメンバーの招待、権限・所定勤務時間帯の変更ができます。
             会社を管理できなくなるのを防ぐため、実際に参加している管理者が自分だけの間は一般に変更できません
           </div>
         )}
@@ -884,16 +865,6 @@ function Members({ me }: { me: Member }) {
           <label htmlFor="iv-mail">メールアドレス</label>
           <input id="iv-mail" type="email" placeholder="you@example.com"
             value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-
-          <label>区分</label>
-          <div className="preset-row">
-            {(['internal', 'external'] as const).map((t) => (
-              <button key={t} className={`preset-chip ${form.member_type === t ? 'sel' : ''}`}
-                onClick={() => setForm({ ...form, member_type: t })}>
-                {t === 'internal' ? '社内' : '社外（バイト等）'}
-              </button>
-            ))}
-          </div>
 
           <label>所定勤務時間帯</label>
           <div className="draft-times">
@@ -989,9 +960,6 @@ function Profile({ me, onRename }: { me: Member; onRename: (name: string) => voi
             <div className="profile-name">{me.name}</div>
             <div className="m-mail">{me.email}</div>
             <div className="account-badges">
-              <span className={`badge ${me.member_type === 'internal' ? 'badge-blue' : 'badge-yellow'}`}>
-                {me.member_type === 'internal' ? '社内' : '社外'}
-              </span>
               <span className="badge badge-gray">{me.role === 'admin' ? '管理者' : '一般'}</span>
               <span className="badge badge-gray">所定 {hm(me.work_start)}–{hm(me.work_end)}</span>
             </div>
@@ -1083,7 +1051,58 @@ const tabsFor = (role: Member['role']): { key: Tab; label: string }[] => [
     : { key: 'profile', label: 'プロフィール' },
 ]
 
-export default function App() {
+/* ---------- デモ（/demo・データはインメモリ） ---------- */
+function DemoApp() {
+  const [tab, setTab] = useState<Tab>('home')
+  const switchable = DEMO_MEMBERS.filter((m) => m.status === 'active')
+  const [me, setMe] = useState(switchable[0])
+  const [open, setOpen] = useState(false)
+
+  const pick = (m: Member) => { setMe(m); setTab('home'); setOpen(false) }
+
+  return (
+    <div className="app">
+      <button className="demo-fab" onClick={() => setOpen(!open)}>
+        デモ画面 · {me.name}（{me.role === 'admin' ? '管理者' : '従業員'}）{open ? ' ▴' : ' ▾'}
+      </button>
+      {open && (
+        <div className="demo-bar">
+          {switchable.map((m, i) => (
+            <button key={m.id} className={`demo-user ${m.id === me.id ? 'sel' : ''}`} onClick={() => pick(m)}>
+              <span className="m-avatar" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>{m.name[0]}</span>
+              {m.name}（{m.role === 'admin' ? '管理者' : '従業員'}）
+            </button>
+          ))}
+          <a href="/" style={{ marginLeft: 'auto', fontSize: 12 }}>ログイン画面へ</a>
+        </div>
+      )}
+      <header className="header">
+        <button className="brand" onClick={() => setTab('home')}>
+          <span className="brand-mark">🌻</span>ひまわり事務機
+        </button>
+        <button className={`avatar ${tab === 'profile' ? 'sel' : ''}`} title="プロフィール・設定"
+          onClick={() => setTab('profile')}>
+          {me.name[0]}
+        </button>
+      </header>
+      {/* keyで切り替え時に各画面を作り直し、前のユーザーのデータを残さない */}
+      {tab === 'home' && <Home key={me.id} me={me} />}
+      {tab === 'report' && <Report key={me.id} me={me} />}
+      {tab === 'schedule' && <Schedule key={me.id} me={me} />}
+      {tab === 'members' && <Members key={me.id} me={me} />}
+      {tab === 'profile' && <Profile key={me.id} me={me} onRename={(name) => setMe({ ...me, name })} />}
+      <nav className="tabbar">
+        {tabsFor(me.role).map((t) => (
+          <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => setTab(t.key)}>
+            <span className="icon">{ICONS[t.key]}</span>{t.label}
+          </button>
+        ))}
+      </nav>
+    </div>
+  )
+}
+
+function App() {
   const [tab, setTab] = useState<Tab>('home')
   const [session, setSession] = useState<Session | null>(null)
   const [me, setMe] = useState<Member | null>(null)
@@ -1177,3 +1196,6 @@ export default function App() {
     </div>
   )
 }
+
+// /demo ではフックの実行を分岐させないよう、コンポーネントごと差し替える
+export default DEMO ? DemoApp : App
