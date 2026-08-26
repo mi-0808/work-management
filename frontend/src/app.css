@@ -306,6 +306,31 @@ tr:last-child td { border-bottom: none; }
   color: var(--blue-700); font-size: 13px; font-weight: 700; padding: 0;
 }
 .auth-links button:hover { text-decoration: underline; }
+.auth-links a {
+  color: var(--blue-700); font-size: 13px; font-weight: 700; text-decoration: none;
+  margin: 0 auto;
+}
+.auth-links a:hover { text-decoration: underline; }
+
+/* demo */
+.demo-fab {
+  display: block; margin: 8px 14px 0 auto; cursor: pointer; font-family: inherit;
+  border: 1px solid var(--line); background: var(--blue-50, #eff6ff);
+  color: var(--blue-700); border-radius: 999px; padding: 4px 12px;
+  font-size: 12px; font-weight: 800;
+}
+.demo-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 14px; background: var(--blue-50, #eff6ff);
+  border-bottom: 1px solid var(--line); font-size: 13px;
+}
+.demo-user {
+  display: flex; align-items: center; gap: 6px; cursor: pointer; font-family: inherit;
+  border: 1px solid var(--line); background: #fff; border-radius: 999px;
+  padding: 3px 10px 3px 3px; font-size: 12px; font-weight: 700; color: inherit;
+}
+.demo-user.sel { border-color: var(--blue-700); background: var(--blue-700); color: #fff; }
+.demo-user .m-avatar { width: 22px; height: 22px; font-size: 11px; }
 
 /* profile */
 .avatar.sel { box-shadow: 0 0 0 3px var(--blue-600); }

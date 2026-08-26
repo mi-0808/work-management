@@ -1,10 +1,14 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { DEMO, demoClient } from './demo'
 
 // publishableキーは公開前提の値なのでフォールバックを直書きしてOK
 export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? 'https://mqnbptyufvbktlirzzrr.supabase.co'
 export const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY ?? 'sb_publishable_lg_RRTGRh_aT-eTT_hydeA_U07NQAqi'
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
+// /demo ではインメモリのモックに差し替える（demo.tsはこのファイルから型のみimportなので循環しない）
+export const supabase = DEMO
+  ? (demoClient as unknown as SupabaseClient)
+  : createClient(SUPABASE_URL, SUPABASE_KEY)
 
 // 有効なOAuthプロバイダを問い合わせる。未設定のプロバイダに遷移すると
 // Supabaseが素のJSONエラーを返して戻れなくなるため、事前に確認して出し分ける
