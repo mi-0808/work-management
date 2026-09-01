@@ -362,9 +362,10 @@ function Home({ me }: { me: Member }) {
   const [week, setWeek] = useState<Attendance[]>([])
   const [plan, setPlan] = useState('')
   const [err, setErr] = useState('')
-  // 押し忘れ修正用: ボタン内で時刻を直接編集する（'in' | 'out' | 編集中でなければnull）
-  const [editing, setEditing] = useState<'in' | 'out' | null>(null)
+  // 押し忘れ修正用: ボタン内で時刻を直接編集する（'in' | 'out' | 中抜けのid | 編集中でなければnull）
+  const [editing, setEditing] = useState<string | null>(null)
   const [editTime, setEditTime] = useState('')
+  const [editTime2, setEditTime2] = useState('') // 中抜けの終了時刻用
   const myhood = useMyhood(me.company_id)
 
   const load = useCallback(async () => {
@@ -420,11 +421,31 @@ function Home({ me }: { me: Member }) {
     setEditTime(isoHm(key === 'in' ? att?.clock_in ?? null : att?.clock_out ?? null))
   }
 
-  const commitEdit = () => {
+  const openBreakEdit = (b: Break) => {
+    setEditing(b.id)
+    setEditTime(isoHm(b.started_at))
+    setEditTime2(isoHm(b.ended_at))
+  }
+
+  const commitEdit = async () => {
     if (!editing) return
-    if (!editTime) return setEditing(null)
-    if (editing === 'in') return save({ clock_in: hmToIso(editTime), auto_in: false })
-    punchOut(hmToIso(editTime))
+    if (editing === 'in') {
+      if (editTime) save({ clock_in: hmToIso(editTime), auto_in: false })
+      return setEditing(null)
+    }
+    if (editing === 'out') {
+      if (editTime) punchOut(hmToIso(editTime))
+      return setEditing(null)
+    }
+    // 中抜け: 開始・終了をまとめて更新（終了を空にすると「中抜け中」に戻る）
+    setErr('')
+    const { error } = await supabase.from('breaks').update({
+      ...(editTime ? { started_at: hmToIso(editTime) } : {}),
+      ended_at: editTime2 ? hmToIso(editTime2) : null,
+    }).eq('id', editing)
+    if (error) return setErr(`休憩時刻を変更できませんでした（${error.message}）`)
+    setEditing(null)
+    load()
   }
 
   // 退勤後にまた稼働する場合。退勤時刻を消して勤務中に戻す
@@ -447,15 +468,6 @@ function Home({ me }: { me: Member }) {
     const { error } = await supabase.from('breaks')
       .update({ ended_at: new Date().toISOString() }).eq('id', openBreak.id)
     if (error) return setErr(`休憩を終了できませんでした（${error.message}）`)
-    load()
-  }
-
-  // 中抜けの開始・終了時刻を手入力で修正
-  const editBreakTime = async (id: string, key: 'started_at' | 'ended_at', t: string) => {
-    if (!t) return
-    setErr('')
-    const { error } = await supabase.from('breaks').update({ [key]: hmToIso(t) }).eq('id', id)
-    if (error) return setErr(`休憩時刻を変更できませんでした（${error.message}）`)
     load()
   }
 
@@ -520,37 +532,50 @@ function Home({ me }: { me: Member }) {
             </button>
           )}
         </div>
-        {att?.clock_in && !att.clock_out && (
-          <div className="punch-row" style={{ marginTop: 10 }}>
-            {openBreak ? (
-              <button className="btn btn-break-end" onClick={endBreak}>
-                中抜けを終了（{fmtTime(openBreak.started_at)}〜）
-              </button>
+        {att?.clock_in && (
+          <div className="punch-row" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+            {(att.breaks ?? []).filter((b) => b.ended_at).map((b) =>
+              editing === b.id ? (
+                <div key={b.id} className="btn btn-break btn-editing">
+                  <span>中抜け</span>
+                  <input type="time" autoFocus value={editTime} onChange={(e) => setEditTime(e.target.value)} />
+                  <span>–</span>
+                  <input type="time" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
+                  <button className="edit-ok" onClick={commitEdit}>✓</button>
+                  <button className="edit-cancel" onClick={() => setEditing(null)}>✕</button>
+                </div>
+              ) : (
+                <button key={b.id} className="btn btn-break btn-chip" title="タップして時刻を修正"
+                  onClick={() => openBreakEdit(b)}>
+                  中抜け {fmtTime(b.started_at)}–{fmtTime(b.ended_at)}<span className="pencil">✎</span>
+                </button>
+              ))}
+            {!att.clock_out && (openBreak ? (
+              editing === openBreak.id ? (
+                <div className="btn btn-break btn-editing">
+                  <span>中抜け</span>
+                  <input type="time" autoFocus value={editTime} onChange={(e) => setEditTime(e.target.value)} />
+                  <span>–</span>
+                  <input type="time" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
+                  <button className="edit-ok" onClick={commitEdit}>✓</button>
+                  <button className="edit-cancel" onClick={() => setEditing(null)}>✕</button>
+                </div>
+              ) : (
+                <button className="btn btn-break-end" onClick={endBreak}>
+                  中抜けを終了（{fmtTime(openBreak.started_at)}〜）
+                  <span className="pencil" title="開始時刻を修正"
+                    onClick={(e) => { e.stopPropagation(); openBreakEdit(openBreak) }}>✎</span>
+                </button>
+              )
             ) : (
               <button className="btn btn-break" onClick={startBreak}>中抜け・休憩を開始</button>
-            )}
+            ))}
           </div>
         )}
         {att?.clock_out && (
           <div className="hero-note">退勤 {fmtTime(att.clock_out)}・実働 {workedLabel(att)}</div>
         )}
       </div>
-
-      {(att?.breaks?.length ?? 0) > 0 && (
-        <div className="card">
-          <h2>中抜けの時刻修正 <span className="tag">開始・終了を手入力</span></h2>
-          {(att?.breaks ?? []).map((b, i) => (
-            <div className="draft-times" key={b.id}>
-              <label style={{ margin: 0 }}>中抜け{i + 1}</label>
-              <input type="time" value={isoHm(b.started_at)}
-                onChange={(e) => editBreakTime(b.id, 'started_at', e.target.value)} />
-              <span>–</span>
-              <input type="time" value={isoHm(b.ended_at)}
-                onChange={(e) => editBreakTime(b.id, 'ended_at', e.target.value)} />
-            </div>
-          ))}
-        </div>
-      )}
 
       <div className="card">
         <h2>今日の予定 <span className="tag">出勤時に登録</span></h2>
