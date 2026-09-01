@@ -1433,7 +1433,7 @@ function Members({ me }: { me: Member }) {
         <div className="card">
           <h2>出勤簿の出力 <span className="tag">月末のCSV出力</span></h2>
           <div className="draft-times">
-            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+            <input type="month" aria-label="対象月" value={month} onChange={(e) => setMonth(e.target.value)} />
             <button className="btn-primary" style={{ margin: 0 }}
               onClick={() => exportKintaiCsv(members, month)}>CSVをダウンロード</button>
           </div>
@@ -1517,7 +1517,7 @@ function MyWork({ me }: { me: Member }) {
     <div className="card">
       <h2>稼働と請求 <span className="tag">実働 × 時給で請求書を発行</span></h2>
       <div className="draft-times">
-        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+        <input type="month" aria-label="対象月" value={month} onChange={(e) => setMonth(e.target.value)} />
         <button className="btn-outline" onClick={() => exportKintaiCsv([me], month)}>稼働表CSV</button>
       </div>
       <div className="log-row">
