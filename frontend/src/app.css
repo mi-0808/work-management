@@ -504,3 +504,16 @@ tr:last-child td { border-bottom: none; }
   background: var(--danger-bg); color: var(--danger);
   font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
 }
+
+/* ログ行の「やったこと」（日報bodyのインライン編集） */
+.log-entry { border-bottom: 1px solid #f0f0f0; padding-bottom: 6px; margin-bottom: 4px; }
+.log-entry:last-child { border-bottom: none; }
+.log-note {
+  display: block; width: 100%; text-align: left; border: none; background: none;
+  cursor: pointer; font-family: inherit; font-size: 13px; color: var(--ink);
+  padding: 4px 0 8px 64px; min-height: 32px;
+}
+.log-note.empty { color: #a3a3a3; }
+.log-note:hover { color: var(--accent-strong); }
+.log-note-edit { margin: 4px 0 8px 64px; }
+.log-note-edit input[type="text"] { flex: 1; width: auto; }

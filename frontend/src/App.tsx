@@ -366,15 +366,24 @@ function Home({ me }: { me: Member }) {
   const [editing, setEditing] = useState<string | null>(null)
   const [editTime, setEditTime] = useState('')
   const [editTime2, setEditTime2] = useState('') // 中抜けの終了時刻用
+  // 最近の勤怠の「やったこと」（日報body）のインライン編集
+  const [reports, setReports] = useState<ReportRow[]>([])
+  const [editDay, setEditDay] = useState<string | null>(null)
+  const [dayBody, setDayBody] = useState('')
   const myhood = useMyhood(me.company_id)
 
   const load = useCallback(async () => {
-    const { data } = await supabase
-      .from('attendances')
-      .select('*, breaks(*)')
-      .eq('member_id', me.id)
-      .order('work_date', { ascending: false })
-      .limit(7)
+    const [{ data }, { data: reps }] = await Promise.all([
+      supabase
+        .from('attendances')
+        .select('*, breaks(*)')
+        .eq('member_id', me.id)
+        .order('work_date', { ascending: false })
+        .limit(7),
+      supabase.from('daily_reports').select('*').eq('member_id', me.id)
+        .order('work_date', { ascending: false }).limit(7),
+    ])
+    setReports((reps as ReportRow[]) ?? [])
     setWeek(data ?? [])
     const t = (data ?? []).find((a) => a.work_date === today()) ?? null
     setAtt(t)
@@ -463,6 +472,19 @@ function Home({ me }: { me: Member }) {
     }).eq('id', editing)
     if (error) return setErr(`休憩時刻を変更できませんでした（${error.message}）`)
     setEditing(null)
+    load()
+  }
+
+  // 「やったこと」＝その日の日報body。ここで書いても日報タブ・CSVの業務内容に反映される
+  const saveDayBody = async () => {
+    if (!editDay) return
+    setErr('')
+    const { error } = await supabase.from('daily_reports').upsert(
+      { member_id: me.id, work_date: editDay, body: dayBody },
+      { onConflict: 'member_id,work_date' },
+    )
+    if (error) return setErr(`保存できませんでした（${error.message}）`)
+    setEditDay(null)
     load()
   }
 
@@ -652,15 +674,32 @@ function Home({ me }: { me: Member }) {
         {week.length === 0 ? <div className="empty">まだ勤怠記録がありません</div> : (
           week.map((a) => {
             const bm = breakMinutes(a.breaks)
+            const body = reports.find((r) => r.work_date === a.work_date)?.body ?? ''
             return (
-              <div key={a.id} className="log-row">
-                <span className="d">{a.work_date.slice(5).replace('-', '/')}</span>
-                <span className="t">
-                  {fmtTime(a.clock_in)} – {a.clock_out ? fmtTime(a.clock_out) : '勤務中'}
-                  {bm > 0 && ` · 中抜け${Math.round(bm)}分`}
-                </span>
-                {(a.auto_in || a.auto_out) && <span className="badge badge-yellow">⚠ 自動補完</span>}
-                <span className="dur">{a.clock_in ? workedLabel(a) : '—'}</span>
+              <div key={a.id} className="log-entry">
+                <div className="log-row">
+                  <span className="d">{a.work_date.slice(5).replace('-', '/')}</span>
+                  <span className="t">
+                    {fmtTime(a.clock_in)} – {a.clock_out ? fmtTime(a.clock_out) : '勤務中'}
+                    {bm > 0 && ` · 中抜け${Math.round(bm)}分`}
+                  </span>
+                  {(a.auto_in || a.auto_out) && <span className="badge badge-yellow">⚠ 自動補完</span>}
+                  <span className="dur">{a.clock_in ? workedLabel(a) : '—'}</span>
+                </div>
+                {editDay === a.work_date ? (
+                  <div className="draft-times log-note-edit">
+                    <input type="text" autoFocus aria-label="やったこと" placeholder="やったことを入力"
+                      value={dayBody} onChange={(e) => setDayBody(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && saveDayBody()} />
+                    <button className="edit-ok" aria-label="保存" onClick={saveDayBody}>✓</button>
+                    <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditDay(null)}>✕</button>
+                  </div>
+                ) : (
+                  <button className={`log-note ${body ? '' : 'empty'}`}
+                    onClick={() => { setEditDay(a.work_date); setDayBody(body) }}>
+                    {body || '＋ やったことを書く'}
+                  </button>
+                )}
               </div>
             )
           })
