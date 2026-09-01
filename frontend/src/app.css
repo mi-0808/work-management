@@ -90,6 +90,19 @@ body {
 .btn:disabled { opacity: .45; cursor: default; }
 .btn-in { background: var(--yellow-400); color: var(--blue-900); }
 .btn-out { background: rgba(255,255,255,.92); color: var(--blue-700); }
+.btn .pencil {
+  margin-left: 8px; padding: 2px 6px; border-radius: 6px;
+  font-size: 13px; font-weight: 400; opacity: .65;
+}
+.btn .pencil:hover { opacity: 1; background: rgba(0,0,0,.08); }
+.btn-editing { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px; }
+.btn-editing input[type="time"] { width: 104px; padding: 6px 8px; font-size: 14px; }
+.edit-ok, .edit-cancel {
+  border: none; border-radius: 8px; width: 32px; height: 32px;
+  font-size: 14px; cursor: pointer; font-family: inherit;
+}
+.edit-ok { background: var(--blue-600); color: #fff; }
+.edit-cancel { background: rgba(0,0,0,.1); color: inherit; }
 .btn-break { background: rgba(255,255,255,.18); color: #fff; border: 1px solid rgba(255,255,255,.45); }
 .btn-break-end { background: #fff; color: #a16207; }
 .hero-note {

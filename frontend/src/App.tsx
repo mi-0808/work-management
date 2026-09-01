@@ -351,8 +351,9 @@ function Home({ me }: { me: Member }) {
   const [week, setWeek] = useState<Attendance[]>([])
   const [plan, setPlan] = useState('')
   const [err, setErr] = useState('')
-  // 打刻前に時刻を指定したいとき用（空なら「今」で打刻）
-  const [pending, setPending] = useState<{ clock_in?: string; clock_out?: string }>({})
+  // 押し忘れ修正用: ボタン内で時刻を直接編集する（'in' | 'out' | 編集中でなければnull）
+  const [editing, setEditing] = useState<'in' | 'out' | null>(null)
+  const [editTime, setEditTime] = useState('')
   const myhood = useMyhood(me.company_id)
 
   const load = useCallback(async () => {
@@ -383,25 +384,15 @@ function Home({ me }: { me: Member }) {
       { onConflict: 'member_id,work_date' },
     )
     if (error) return setErr(`保存できませんでした（${error.message}）。ログインし直してもう一度お試しください`)
-    setPending({})
+    setEditing(null)
     load()
   }
 
-  const punchIn = () =>
-    save({ clock_in: pending.clock_in ? hmToIso(pending.clock_in) : new Date().toISOString() })
-
-  // 打刻済みの時刻は入力で即修正、未打刻なら指定時刻として保持しボタンで打刻
-  const changeClock = (key: 'clock_in' | 'clock_out', t: string) => {
-    if (!t) return
-    if (att?.[key]) save({ [key]: hmToIso(t), [key === 'clock_in' ? 'auto_in' : 'auto_out']: false })
-    else setPending((p) => ({ ...p, [key]: t }))
-  }
+  const punchIn = () => save({ clock_in: new Date().toISOString() })
 
   // 退勤のみ → 出勤を所定開始時刻で自動補完
-  const punchOut = () => {
-    const patch: Partial<Attendance> = {
-      clock_out: pending.clock_out ? hmToIso(pending.clock_out) : new Date().toISOString(),
-    }
+  const punchOut = (clockOut = new Date().toISOString()) => {
+    const patch: Partial<Attendance> = { clock_out: clockOut }
     if (!att?.clock_in) {
       const d = new Date()
       const [h, m] = hm(me.work_start).split(':').map(Number)
@@ -410,6 +401,19 @@ function Home({ me }: { me: Member }) {
       patch.auto_in = true
     }
     return save(patch)
+  }
+
+  // ボタン内の時刻エディタを開く（現在の記録があればそれを初期値に）
+  const openEdit = (key: 'in' | 'out') => {
+    setEditing(key)
+    setEditTime(isoHm(key === 'in' ? att?.clock_in ?? null : att?.clock_out ?? null))
+  }
+
+  const commitEdit = () => {
+    if (!editing) return
+    if (!editTime) return setEditing(null)
+    if (editing === 'in') return save({ clock_in: hmToIso(editTime), auto_in: false })
+    punchOut(hmToIso(editTime))
   }
 
   // 退勤後にまた稼働する場合。退勤時刻を消して勤務中に戻す
@@ -464,13 +468,41 @@ function Home({ me }: { me: Member }) {
         <div className="status-chip"><span className="dot" />{status}</div>
         {err && <div className="notice warn" style={{ position: 'relative', zIndex: 1 }}>{err}</div>}
         <div className="punch-row">
-          <button className="btn btn-in" disabled={!!att?.clock_in} onClick={punchIn}>
-            {att?.clock_in ? `出勤 ${fmtTime(att.clock_in)}` : '出勤する'}
-          </button>
-          {att?.clock_out ? (
-            <button className="btn btn-out" onClick={resume}>勤務を再開</button>
+          {editing === 'in' ? (
+            <div className="btn btn-in btn-editing">
+              <span>出勤</span>
+              <input type="time" autoFocus value={editTime}
+                onChange={(e) => setEditTime(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && commitEdit()} />
+              <button className="edit-ok" onClick={commitEdit}>✓</button>
+              <button className="edit-cancel" onClick={() => setEditing(null)}>✕</button>
+            </div>
           ) : (
-            <button className="btn btn-out" disabled={!!openBreak} onClick={punchOut}>退勤する</button>
+            <button className="btn btn-in" onClick={() => (att?.clock_in ? openEdit('in') : punchIn())}>
+              {att?.clock_in ? <>出勤 {fmtTime(att.clock_in)}<span className="pencil">✎</span></> : '出勤する'}
+            </button>
+          )}
+          {editing === 'out' ? (
+            <div className="btn btn-out btn-editing">
+              <span>退勤</span>
+              <input type="time" autoFocus value={editTime}
+                onChange={(e) => setEditTime(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && commitEdit()} />
+              <button className="edit-ok" onClick={commitEdit}>✓</button>
+              <button className="edit-cancel" onClick={() => setEditing(null)}>✕</button>
+            </div>
+          ) : att?.clock_out ? (
+            <button className="btn btn-out" onClick={resume}>
+              勤務を再開
+              <span className="pencil" title="退勤時刻を修正"
+                onClick={(e) => { e.stopPropagation(); openEdit('out') }}>✎</span>
+            </button>
+          ) : (
+            <button className="btn btn-out" disabled={!!openBreak} onClick={() => punchOut()}>
+              退勤する
+              <span className="pencil" title="時刻を指定して退勤（押し忘れの修正）"
+                onClick={(e) => { e.stopPropagation(); openEdit('out') }}>✎</span>
+            </button>
           )}
         </div>
         {att?.clock_in && !att.clock_out && (
@@ -489,31 +521,21 @@ function Home({ me }: { me: Member }) {
         )}
       </div>
 
-      <div className="card">
-        <h2>時刻の指定・修正 <span className="tag">打刻前は指定、打刻後は修正</span></h2>
-        <div className="draft-times">
-          <label style={{ margin: 0 }}>出勤</label>
-          <input type="time" value={att?.clock_in ? isoHm(att.clock_in) : pending.clock_in ?? ''}
-            onChange={(e) => changeClock('clock_in', e.target.value)} />
-          <label style={{ margin: 0 }}>退勤</label>
-          <input type="time" value={att?.clock_out ? isoHm(att.clock_out) : pending.clock_out ?? ''}
-            onChange={(e) => changeClock('clock_out', e.target.value)} />
+      {(att?.breaks?.length ?? 0) > 0 && (
+        <div className="card">
+          <h2>中抜けの時刻修正 <span className="tag">開始・終了を手入力</span></h2>
+          {(att?.breaks ?? []).map((b, i) => (
+            <div className="draft-times" key={b.id}>
+              <label style={{ margin: 0 }}>中抜け{i + 1}</label>
+              <input type="time" value={isoHm(b.started_at)}
+                onChange={(e) => editBreakTime(b.id, 'started_at', e.target.value)} />
+              <span>–</span>
+              <input type="time" value={isoHm(b.ended_at)}
+                onChange={(e) => editBreakTime(b.id, 'ended_at', e.target.value)} />
+            </div>
+          ))}
         </div>
-        {(att?.breaks ?? []).map((b, i) => (
-          <div className="draft-times" key={b.id}>
-            <label style={{ margin: 0 }}>中抜け{i + 1}</label>
-            <input type="time" value={isoHm(b.started_at)}
-              onChange={(e) => editBreakTime(b.id, 'started_at', e.target.value)} />
-            <span>–</span>
-            <input type="time" value={isoHm(b.ended_at)}
-              onChange={(e) => editBreakTime(b.id, 'ended_at', e.target.value)} />
-          </div>
-        ))}
-        <div className="notice">
-          時刻を選んでから「出勤する」「退勤する」を押すと、その時刻で打刻されます。
-          打刻済みの時刻や中抜けの開始・終了は、ここで直接修正できます
-        </div>
-      </div>
+      )}
 
       <div className="card">
         <h2>今日の予定 <span className="tag">出勤時に登録</span></h2>
