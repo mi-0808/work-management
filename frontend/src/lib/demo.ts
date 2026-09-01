@@ -96,7 +96,7 @@ const tables: Record<string, Record<string, unknown>[]> = {
 }
 
 type Row = Record<string, unknown>
-type Op = { kind: 'select' } | { kind: 'insert'; values: Row } | { kind: 'update'; patch: Row } | { kind: 'upsert'; values: Row; conflict: string[] }
+type Op = { kind: 'select' } | { kind: 'insert'; values: Row } | { kind: 'update'; patch: Row } | { kind: 'upsert'; values: Row; conflict: string[] } | { kind: 'delete' }
 
 // 本アプリで使うチェーンだけ実装した最小クエリビルダ
 class Query implements PromiseLike<{ data: unknown; error: null }> {
@@ -113,6 +113,7 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
   select(cols = '*') { this.embedBreaks = cols.includes('breaks'); return this }
   insert(values: Row) { this.op = { kind: 'insert', values }; return this }
   update(patch: Row) { this.op = { kind: 'update', patch }; return this }
+  delete() { this.op = { kind: 'delete' }; return this }
   upsert(values: Row, opts?: { onConflict?: string }) {
     this.op = { kind: 'upsert', values, conflict: (opts?.onConflict ?? 'id').split(',') }
     return this
@@ -141,6 +142,11 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
       }
       rows.push(row)
       return { data: row, error: null }
+    }
+    if (this.op.kind === 'delete') {
+      const table = tables[this.table] ?? []
+      for (let i = table.length - 1; i >= 0; i--) if (match(table[i])) table.splice(i, 1)
+      return { data: null, error: null }
     }
     if (this.op.kind === 'update') {
       for (const r of rows) if (match(r)) Object.assign(r, this.op.patch)
