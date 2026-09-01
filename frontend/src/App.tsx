@@ -488,14 +488,13 @@ function Home({ me }: { me: Member }) {
       <div className="hero">
         <div className="date">
           {now.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}
+          {' · '}<b>{status}</b>
         </div>
         <div className="clock">
-          {now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          {now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+          <span className="sec">:{String(now.getSeconds()).padStart(2, '0')}</span>
         </div>
-        <div className="status-chip">
-          <span className={`dot ${openBreak ? 'away' : att?.clock_in && !att.clock_out ? 'on' : ''}`} />{status}
-        </div>
-        {err && <div className="notice warn" style={{ position: 'relative', zIndex: 1 }}>{err}</div>}
+        {err && <div className="notice warn">{err}</div>}
         <div className="punch-row">
           {editing === 'in' ? (
             <div className="btn btn-in btn-editing">
@@ -609,29 +608,20 @@ function Home({ me }: { me: Member }) {
       <div className="card">
         <h2>最近の勤怠</h2>
         {week.length === 0 ? <div className="empty">まだ勤怠記録がありません</div> : (
-          <table>
-            <thead>
-              <tr><th>日付</th><th>出勤</th><th>退勤</th><th>中抜け</th><th>実働</th><th>状態</th></tr>
-            </thead>
-            <tbody>
-              {week.map((a) => {
-                const bm = breakMinutes(a.breaks)
-                return (
-                  <tr key={a.id}>
-                    <td>{a.work_date.slice(5).replace('-', '/')}</td>
-                    <td>{fmtTime(a.clock_in)}</td>
-                    <td>{fmtTime(a.clock_out)}</td>
-                    <td>{bm > 0 ? `${Math.round(bm)}分` : '—'}</td>
-                    <td>{a.clock_in ? workedLabel(a) : '—'}</td>
-                    <td>
-                      {(a.auto_in || a.auto_out) && <span className="badge badge-yellow">⚠ 自動補完</span>}{' '}
-                      <span className="badge badge-blue">{a.clock_out ? '退勤済み' : a.clock_in ? '勤務中' : '—'}</span>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+          week.map((a) => {
+            const bm = breakMinutes(a.breaks)
+            return (
+              <div key={a.id} className="log-row">
+                <span className="d">{a.work_date.slice(5).replace('-', '/')}</span>
+                <span className="t">
+                  {fmtTime(a.clock_in)} – {a.clock_out ? fmtTime(a.clock_out) : '勤務中'}
+                  {bm > 0 && ` · 中抜け${Math.round(bm)}分`}
+                </span>
+                {(a.auto_in || a.auto_out) && <span className="badge badge-yellow">⚠ 自動補完</span>}
+                <span className="dur">{a.clock_in ? workedLabel(a) : '—'}</span>
+              </div>
+            )
+          })
         )}
         {att?.auto_in && (
           <div className="notice">
