@@ -59,13 +59,32 @@ for (const [mi, m] of DEMO_MEMBERS.slice(0, 3).entries()) {
   if (mi === 2) breaks.push({ id: uid(), attendance_id: a.id, started_at: new Date(Date.now() - 20 * 60000).toISOString(), ended_at: null, note: null })
 }
 
+// 鈴木は前日出勤したまま退勤し忘れ（自動退勤のデモ）。通常シードと重複しないよう前日分は差し替え
+{
+  const i = attendances.findIndex((a) => a.member_id === 'm4' && a.work_date === dayOffset(-1))
+  if (i >= 0) attendances.splice(i, 1)
+}
+attendances.push({
+  id: uid(), member_id: 'm4', work_date: dayOffset(-1),
+  clock_in: at(dayOffset(-1), 18, 0), clock_out: null,
+  auto_in: false, auto_out: false, plan: null, plan_video: null,
+})
+
 const daily_reports: Report[] = DEMO_MEMBERS.slice(0, 4).flatMap((m, mi) =>
   [3, 2, 1].map((i) => ({
     id: uid(), member_id: m.id, work_date: dayOffset(-i),
     body: `${PLANS[(mi + i) % PLANS.length]}を完了。特に問題なし。`,
     video: null,
     submitted_at: at(dayOffset(-i), 18, 30),
+    plan: null, planned_start: null, planned_end: null, confirmed: false,
   })))
+// 高橋（m1）の未来の稼働予定（日報タブ「稼働予定とやること」のデモ）
+daily_reports.push(
+  { id: uid(), member_id: 'm1', work_date: dayOffset(1), body: '', video: null,
+    submitted_at: at(today(), 9), plan: '・見積書の最終確認\n・新規案件のヒアリング準備', planned_start: '09:00', planned_end: '18:00', confirmed: false },
+  { id: uid(), member_id: 'm1', work_date: dayOffset(7), body: '', video: null,
+    submitted_at: at(today(), 9), plan: '・月次レポート作成', planned_start: '10:00', planned_end: '17:00', confirmed: false },
+)
 
 const ok = { status: 'confirmed', proposed_by: null, to_member_id: null } as const
 const schedules: Schedule[] = [
@@ -96,7 +115,7 @@ const tables: Record<string, Record<string, unknown>[]> = {
 }
 
 type Row = Record<string, unknown>
-type Op = { kind: 'select' } | { kind: 'insert'; values: Row } | { kind: 'update'; patch: Row } | { kind: 'upsert'; values: Row; conflict: string[] }
+type Op = { kind: 'select' } | { kind: 'insert'; values: Row } | { kind: 'update'; patch: Row } | { kind: 'upsert'; values: Row; conflict: string[] } | { kind: 'delete' }
 
 // 本アプリで使うチェーンだけ実装した最小クエリビルダ
 class Query implements PromiseLike<{ data: unknown; error: null }> {
@@ -113,6 +132,7 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
   select(cols = '*') { this.embedBreaks = cols.includes('breaks'); return this }
   insert(values: Row) { this.op = { kind: 'insert', values }; return this }
   update(patch: Row) { this.op = { kind: 'update', patch }; return this }
+  delete() { this.op = { kind: 'delete' }; return this }
   upsert(values: Row, opts?: { onConflict?: string }) {
     this.op = { kind: 'upsert', values, conflict: (opts?.onConflict ?? 'id').split(',') }
     return this
@@ -141,6 +161,11 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
       }
       rows.push(row)
       return { data: row, error: null }
+    }
+    if (this.op.kind === 'delete') {
+      const table = tables[this.table] ?? []
+      for (let i = table.length - 1; i >= 0; i--) if (match(table[i])) table.splice(i, 1)
+      return { data: null, error: null }
     }
     if (this.op.kind === 'update') {
       for (const r of rows) if (match(r)) Object.assign(r, this.op.patch)

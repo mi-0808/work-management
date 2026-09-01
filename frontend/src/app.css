@@ -1,25 +1,36 @@
-/* MyHood / 青海ファミリー × HIG:
-   ニュートラル基調 + アクセントは海色cyan 1色 + 意味色トークン。クロームは黒 */
+/* MyHood テーマ移植:
+   白基調＋境界線でメリハリ。アクセントはエメラルド #007f66（白地4.97:1）、
+   ブランドはエメラルド→ブルーの深色グラデ（白文字全域4.5:1保証）。
+   ヘッダーは黒系グラデ、タブバーはライトガラス。全て MyhoodBeta/src/styles/theme.css 準拠 */
 :root {
-  /* ニュートラル */
-  --ink: #171717;
-  --muted: #525252; /* 白地で7:1、淡いtint上でも4.5:1を確保 */
+  /* テキスト階層（MyHood: text / secondary / muted / faint） */
+  --ink: #0f172a;
+  --text-secondary: #334155;
+  --muted: #475569;
+  --text-faint: #616f82;
   --bg: #ffffff;
   --card: #ffffff;
-  --line: #e5e5e5;
-  --chrome: #0a0a0a;
-  /* アクセント1色（青海cyan）。淡色はcolor-mixで派生させ色相を揃える */
-  --accent: oklch(52% 0.11 220);
-  --accent-strong: oklch(40% 0.1 220);
-  --accent-tint: color-mix(in oklab, var(--accent) 8%, white);
-  --accent-soft: color-mix(in oklab, var(--accent) 16%, white);
-  /* 意味色（成功・警告・危険以外に使わない） */
-  --success: #047857;
-  --success-bg: #d1fae5;
-  --warn: #b45309;
-  --warn-bg: #fef3c7;
-  --danger: #b91c1c;
-  --danger-bg: #fee2e2;
+  --surface-2: #f8fafc;
+  --surface-3: #f1f5f9;
+  --line: #e2e8f0;            /* 入力・弱い区切り */
+  --border-strong: #94a3b8;   /* 面の境界を明示する線 */
+  /* ブランド（緑は視認性向上のため MyHood 原色よりさらに深く。白地 6:1 超） */
+  --brand-gradient: linear-gradient(135deg, #00654f 0%, #0058c9 100%);
+  --accent: #00654f;
+  --accent-strong: #004a3a;
+  --accent-blue: #2F8CFF;
+  --accent-tint: color-mix(in oklab, var(--accent) 5%, white);
+  --accent-soft: color-mix(in oklab, var(--accent) 12%, white);
+  /* 影（MyHood soft shadow） */
+  --shadow-card: 0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.02);
+  --shadow-md: 0 4px 12px rgba(0,0,0,.06), 0 2px 4px rgba(0,0,0,.04);
+  /* 意味色（MyHood status: 全て白地4.5:1以上） */
+  --success: #008156;
+  --success-bg: color-mix(in oklab, #008156 6%, white);
+  --warn: #a26000;
+  --warn-bg: color-mix(in oklab, #a26000 6%, white);
+  --danger: #d70000;
+  --danger-bg: color-mix(in oklab, #d70000 5%, white);
   /* 旧名エイリアス（参照側の一括書き換えを避ける） */
   --blue-900: var(--ink);
   --blue-700: var(--accent-strong);
@@ -42,16 +53,21 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-.app { max-width: 960px; margin: 0 auto; padding: 0 20px 96px; }
+/* PC用: 広めのコンテナ。モバイルはそのまま1カラムで最適化 */
+.app { max-width: 1040px; margin: 0 auto; padding: 0 20px 120px; }
+@media (min-width: 768px) { .app { padding: 0 32px 120px; } }
 
-/* header: MyHood風の黒いクローム */
+/* header: 白ガラス（黒ヘッダーは重い、との評でライト化） */
 .header {
   display: flex; align-items: center; justify-content: space-between;
   position: sticky; top: 0; z-index: 20;
-  margin: 0 -20px 12px; padding: 12px 20px;
-  background: var(--chrome); backdrop-filter: blur(12px);
-  color: #fff;
+  margin: 0 -32px 20px; padding: 12px 32px;
+  background: rgba(255,255,255,.92); backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
 }
+@media (max-width: 767px) { .header { margin: 0 -20px 12px; padding: 12px 20px; } }
 .brand {
   display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px;
   border: none; background: none; padding: 0; cursor: pointer;
@@ -59,31 +75,35 @@ body {
 }
 .brand-mark {
   width: 34px; height: 34px; border-radius: 50%;
-  background: #fff;
-  color: #0a0a0a; display: grid; place-items: center; font-size: 16px;
+  background: var(--brand-gradient);
+  color: #fff; display: grid; place-items: center; font-size: 16px;
 }
 .brand-edit {
-  border: none; background: none; cursor: pointer; color: rgba(255,255,255,.6);
+  border: none; background: none; cursor: pointer; color: var(--muted);
   font-size: 14px; padding: 4px; border-radius: 8px;
 }
-.brand-edit:hover { background: rgba(255,255,255,.15); color: #fff; }
+.brand-edit:hover { background: var(--surface-3); color: var(--ink); }
 .avatar {
-  border: 1.5px solid rgba(255,255,255,.7); cursor: pointer; font-family: inherit;
+  border: none; cursor: pointer; font-family: inherit;
   width: 36px; height: 36px; border-radius: 50%;
-  background: none; color: #fff;
+  background: var(--brand-gradient); color: #fff;
   display: grid; place-items: center; font-weight: 700; font-size: 14px;
 }
 
 /* hero: モノクロ・エディトリアル。カード装飾なし、特大の等幅時計 */
 .hero { padding: 12px 0 24px; color: var(--ink); }
-.hero .date { font-size: 13px; color: #737373; }
+.hero .date { font-size: 13px; color: var(--muted); }
 .hero .date b { color: var(--ink); }
+/* Apple HIG 準拠: 時計は SF Pro（system-ui）＋ tabular figures。
+   等幅フォントはゼロにスラッシュ/ドットが入り時計らしくないため不使用 */
 .hero .clock {
-  font-family: var(--mono);
-  font-size: clamp(48px, 13vw, 64px); font-weight: 700; letter-spacing: -3px;
-  margin: 2px 0 20px; font-variant-numeric: tabular-nums;
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, "Hiragino Sans", sans-serif;
+  font-size: clamp(52px, 13vw, 76px); font-weight: 600; letter-spacing: -0.03em;
+  margin: 2px 0 20px;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }
-.hero .clock .sec { font-size: .45em; color: #a3a3a3; letter-spacing: -1px; }
+.hero .clock .sec { font-size: .45em; color: var(--text-faint); letter-spacing: -1px; }
 
 .punch-row { display: flex; gap: 10px; }
 .btn {
@@ -93,11 +113,11 @@ body {
 }
 .btn:active { transform: scale(.97); }
 .btn:disabled { opacity: .45; cursor: default; }
-.btn-in { background: #0a0a0a; color: #fff; }
-.btn-in:disabled { background: #f5f5f5; color: #737373; opacity: 1; }
-.btn-out { background: #0a0a0a; color: #fff; }
+.btn-in { background: var(--brand-gradient); color: #fff; }
+.btn-in:disabled { background: var(--surface-3); color: var(--muted); opacity: 1; }
+.btn-out { background: var(--brand-gradient); color: #fff; }
 /* 打刻済み側はグレーの記録表示、次のアクションだけが黒になる */
-.btn-split:has(.btn:disabled) .icon-btn { background: #f5f5f5; color: #737373; border: none; }
+.btn-split:has(.btn:disabled) .icon-btn { background: var(--surface-3); color: var(--muted); border: none; }
 /* 分割ボタン: 本体 + 独立した✎ボタン（44px、フォーカス可能） */
 .btn-split { display: flex; flex: 1; gap: 1px; }
 .btn-split .btn { border-radius: 14px 0 0 14px; }
@@ -106,9 +126,10 @@ body {
   border-radius: 0 14px 14px 0; font-family: inherit; font-size: 15px;
   display: grid; place-items: center;
 }
-.icon-btn.on-in { background: #0a0a0a; color: rgba(255,255,255,.75); border-left: 1px solid rgba(255,255,255,.25); }
-.icon-btn.on-out { background: #0a0a0a; color: rgba(255,255,255,.75); border-left: 1px solid rgba(255,255,255,.25); }
-.icon-btn.on-break { background: #0a0a0a; color: rgba(255,255,255,.75); border-left: 1px solid rgba(255,255,255,.25); }
+.icon-btn.on-in, .icon-btn.on-out, .icon-btn.on-break {
+  background: var(--accent-strong); color: rgba(255,255,255,.85);
+  border-left: 1px solid rgba(255,255,255,.25);
+}
 .icon-btn.on-chip {
   background: #fff; color: var(--muted);
   border: 1px solid var(--line); border-left: none;
@@ -121,11 +142,11 @@ body {
 }
 .edit-ok { background: var(--accent); color: #fff; }
 .edit-cancel { background: rgba(0,0,0,.08); color: inherit; }
-.btn-break { background: none; color: var(--ink); border: 1.5px solid var(--ink); }
-.btn-break-end { background: #0a0a0a; color: #fff; }
+.btn-break { background: none; color: var(--accent); border: 1.5px solid var(--accent); }
+.btn-break-end { background: var(--accent); color: #fff; }
 .btn-chip {
   flex: 0 1 auto; padding: 12px 16px; font-size: 13px; font-variant-numeric: tabular-nums;
-  background: #f5f5f5; color: var(--ink);
+  background: var(--surface-3); color: var(--ink);
 }
 .btn-split.chip { flex: 0 1 auto; }
 .btn-split.chip .btn { cursor: default; }
@@ -134,15 +155,16 @@ body {
   font-size: 12px; color: var(--muted);
 }
 
-/* cards → 罫線区切りのフラットなセクション */
+/* cards: MyHood流 — 白い面＋境界線＋ソフトシャドウで面を明示 */
 .card {
-  background: none; border: none; border-radius: 0; box-shadow: none;
-  padding: 24px 0; margin: 0;
-  border-top: 1px solid var(--line);
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  padding: 20px; margin: 0 0 16px;
 }
+@media (min-width: 768px) { .card { padding: 24px; } }
 .card h2 { margin: 0 0 14px; font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 8px; }
 .card h2 .tag {
-  font-size: 12px; font-weight: 700; color: #737373; background: none; padding: 0;
+  font-size: 12px; font-weight: 700; color: var(--muted); background: none; padding: 0;
 }
 
 textarea, input[type="text"], input[type="email"], input[type="password"],
@@ -157,21 +179,22 @@ label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); 
 label:first-child { margin-top: 0; }
 
 .btn-primary {
-  background: var(--accent);
+  background: var(--brand-gradient);
   color: #fff; border: none; border-radius: 999px;
   min-height: 44px; padding: 11px 20px; font-size: 14px; font-weight: 700; cursor: pointer;
   margin-top: 14px; font-family: inherit;
 }
-.btn-primary:hover { background: var(--accent-strong); }
-.btn-primary:disabled { opacity: .4; cursor: default; background: var(--accent); }
+.btn-primary:hover { filter: brightness(1.1); }
+.btn-primary:disabled { opacity: .4; cursor: default; }
 
 /* lists */
 .list { display: flex; flex-direction: column; gap: 10px; }
 .list-item {
   display: flex; align-items: center; gap: 12px;
-  padding: 12px 14px; border-radius: 12px; background: #f5f5f5;
+  padding: 12px 14px; border-radius: 12px; background: var(--surface-2);
+  border: 1px solid var(--line);
 }
-.list-item.ev-yellow { background: #f5f5f5; }
+.list-item.ev-yellow { background: var(--surface-2); }
 .list-item .when {
   font-size: 12px; font-weight: 700; color: var(--ink);
   min-width: 76px; font-variant-numeric: tabular-nums;
@@ -191,9 +214,9 @@ td { padding: 10px; border-bottom: 1px solid var(--line); font-variant-numeric: 
 tr:last-child td { border-bottom: none; }
 
 .badge { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
-.badge-blue { background: var(--accent-soft); color: var(--accent-strong); }
+.badge-blue { background: var(--accent-tint); color: var(--accent); }
 .badge-yellow { background: var(--warn-bg); color: var(--warn); }
-.badge-gray { background: #f5f5f5; color: var(--muted); }
+.badge-gray { background: var(--surface-3); color: var(--muted); }
 
 /* onboarding */
 .onb-lead { font-size: 13px; color: var(--muted); line-height: 1.7; margin: 0 0 16px; }
@@ -247,11 +270,11 @@ tr:last-child td { border-bottom: none; }
 
 /* 名簿見出し右の招待ボタンと、控えめな参加コード行 */
 .h2-action {
-  margin-left: auto; border: none; background: var(--accent);
+  margin-left: auto; border: none; background: var(--brand-gradient);
   color: #fff; border-radius: 999px; min-height: 44px; padding: 5px 18px;
   font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
 }
-.h2-action:hover { background: var(--accent-strong); }
+.h2-action:hover { filter: brightness(1.1); }
 .join-code-subtle {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
@@ -296,7 +319,7 @@ tr:last-child td { border-bottom: none; }
 .cal-dots { display: flex; gap: 2px; height: 5px; }
 .cal-dots i, .tl-legend i { width: 5px; height: 5px; border-radius: 50%; display: inline-block; }
 .dot-me { background: var(--accent); }
-.dot-boss { background: #a3a3a3; }
+.dot-boss { background: var(--border-strong); }
 .cal-day.sel .dot-me { background: #fff; }
 
 /* day timeline */
@@ -317,7 +340,7 @@ tr:last-child td { border-bottom: none; }
 }
 .tl-block b { display: inline; }
 .tl-block.me { background: var(--accent-soft); color: var(--ink); border-left: 3px solid var(--accent); }
-.tl-block.boss { background: #f0f0f0; color: var(--muted); border-left: 3px solid #a3a3a3; }
+.tl-block.boss { background: var(--surface-3); color: var(--muted); border-left: 3px solid var(--border-strong); }
 .tl-block.draft { background: var(--accent); color: #fff; border: 2px dashed #fff; opacity: .92; }
 .tl-block.draft.conflict { background: var(--danger); }
 .draft-form { margin-top: 14px; }
@@ -429,27 +452,34 @@ tr:last-child td { border-bottom: none; }
 .account-menu .btn-primary { width: 100%; }
 .btn-logout {
   width: 100%; margin-top: 8px; border: 1px solid var(--line); background: #fff;
-  color: #dc2626; border-radius: 10px; padding: 10px; font-size: 14px; font-weight: 700;
+  color: var(--danger); border-radius: 10px; padding: 10px; font-size: 14px; font-weight: 700;
   cursor: pointer; font-family: inherit;
 }
-.btn-logout:hover { background: #fef2f2; }
+.btn-logout:hover { background: var(--danger-bg); }
 
-/* bottom tab bar: MyHood風の黒いクローム */
+/* bottom tab bar: MyHood のライトガラス・フローティングピル */
 .tabbar {
-  position: fixed; bottom: 0; left: 0; right: 0;
-  background: var(--chrome); backdrop-filter: blur(12px);
-  display: flex; justify-content: center; gap: 4px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+  width: min(480px, calc(100% - 24px));
+  background: rgba(241, 245, 249, 0.85); backdrop-filter: blur(16px);
+  border: 1px solid rgba(15, 23, 42, 0.06); border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.10);
+  display: flex; justify-content: center; gap: 4px;
+  padding: 6px; margin-bottom: env(safe-area-inset-bottom);
 }
 .tab {
-  flex: 1; max-width: 140px; border: none; background: none; cursor: pointer;
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
-  padding: 8px 0; border-radius: 0; border-top: 2px solid transparent;
-  color: rgba(255,255,255,.55);
+  flex: 1; border: none; background: none; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 7px 0; border-radius: 999px;
+  color: var(--muted);
   font-size: 12px; font-weight: 700; font-family: inherit;
 }
 .tab .icon { display: block; width: 22px; height: 22px; }
 .tab .icon svg { width: 100%; height: 100%; }
-.tab.active { color: #fff; border-top-color: #fff; }
+.tab.active {
+  background: #fff; color: var(--accent);
+  box-shadow: 0 1px 3px rgba(15,23,42,.12), 0 4px 10px rgba(15,23,42,.08);
+}
 
 .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 20px 0; }
 .notice {
@@ -472,7 +502,7 @@ tr:last-child td { border-bottom: none; }
   padding: 8px 0; font-variant-numeric: tabular-nums;
 }
 .log-row .d { min-width: 52px; font-weight: 700; }
-.log-row .t { color: #737373; }
+.log-row .t { color: var(--muted); }
 .log-row .dur { margin-left: auto; font-family: var(--mono); font-weight: 700; }
 
 /* 請求書（印刷用ビュー） */
@@ -498,3 +528,95 @@ tr:last-child td { border-bottom: none; }
   .app { padding: 0; max-width: none; }
   body { background: #fff; }
 }
+
+.edit-delete {
+  border: none; border-radius: 10px; min-height: 44px; padding: 0 14px;
+  background: var(--danger-bg); color: var(--danger);
+  font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+}
+
+/* ログ行の「やったこと」（日報bodyのインライン編集） */
+.log-entry { border-bottom: 1px solid var(--line); padding-bottom: 6px; margin-bottom: 4px; }
+.log-entry:last-child { border-bottom: none; }
+.log-note {
+  display: block; width: 100%; text-align: left; border: none; background: none;
+  cursor: pointer; font-family: inherit; font-size: 13px; color: var(--ink);
+  padding: 4px 0 8px 64px; min-height: 32px;
+}
+.log-note.empty { color: var(--text-faint); }
+.log-note:hover { color: var(--accent-strong); }
+.log-note-edit { margin: 4px 0 8px 64px; }
+.log-note-edit input[type="text"] { flex: 1; width: auto; }
+
+/* 日報タブ: 稼働予定表（Excelセル風。枠なし、クリックでその場編集、離れると自動保存） */
+.plan-table-wrap { overflow-x: auto; }
+.plan-table { border: 1px solid var(--line); }
+.plan-table th { padding: 6px 10px; border-right: 1px solid var(--line); }
+.plan-table td { padding: 0; border-right: 1px solid var(--line); vertical-align: top; }
+.plan-table th:last-child, .plan-table td:last-child { border-right: none; }
+.plan-table .pt-date { white-space: nowrap; font-weight: 700; padding: 9px 10px; }
+.pt-saved { margin-left: 6px; font-size: 11px; font-weight: 700; color: var(--success); }
+/* セルの入力は枠を消して素の文字に見せる。フォーカス時だけセルが縁取られる */
+.plan-table input.pt-time, .plan-table .pt-plan textarea {
+  border: none; border-radius: 0; background: none; width: 100%;
+  min-height: 36px; padding: 8px 10px; font-size: 13px;
+}
+.plan-table input.pt-time { width: 72px; text-align: center; font-variant-numeric: tabular-nums; }
+.plan-table .pt-plan { width: 100%; min-width: 220px; }
+.plan-table .pt-plan textarea { field-sizing: content; resize: none; }
+.plan-table input.pt-time:hover, .plan-table .pt-plan textarea:hover { background: var(--surface-2); }
+.plan-table input.pt-time:focus, .plan-table .pt-plan textarea:focus {
+  outline: 2px solid var(--accent); outline-offset: -2px; background: #fff;
+}
+.month-nav { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 15px; }
+.month-nav b { min-width: 96px; text-align: center; font-variant-numeric: tabular-nums; }
+.month-nav button {
+  border: 1px solid var(--line); background: #fff; cursor: pointer; font-family: inherit;
+  border-radius: 8px; min-width: 44px; min-height: 44px; font-size: 12px; color: var(--muted);
+}
+.month-nav button:hover { background: var(--surface-2); color: var(--ink); }
+.plan-table .pt-today td, .plan-table tr.pt-today .pt-date { background: var(--accent-tint); }
+
+/* 今週の予定: 天気予報風ストリップ＋選択日の詳細 */
+.week-strip { display: flex; overflow-x: auto; gap: 4px; padding-bottom: 6px; }
+.ws-day {
+  min-width: 64px; flex-shrink: 0; border: none; background: none; cursor: pointer;
+  font-family: inherit; text-align: center; border-radius: 10px; padding: 8px 2px;
+  display: flex; flex-direction: column; gap: 3px; color: var(--ink);
+}
+.ws-day:hover { background: var(--surface-2); }
+.ws-day.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ws-day.off .ws-range { color: var(--muted); background: var(--surface-3); }
+.ws-dow { font-size: 13px; font-weight: 700; }
+.ws-date { font-size: 12px; color: var(--muted); }
+.ws-range { font-size: 12px; color: var(--accent); background: var(--accent-tint); border-radius: 6px; padding: 2px 0; font-variant-numeric: tabular-nums; }
+.ws-dots { font-size: 10px; color: var(--accent-blue); letter-spacing: 2px; min-height: 14px; }
+.ws-day.off .ws-dots, .ws-dots:empty { color: var(--text-faint); }
+.week-detail { border-top: 1px solid var(--line); padding-top: 10px; font-size: 13px; }
+.wd-head { font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+.wd-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+.wd-row b { min-width: 88px; font-variant-numeric: tabular-nums; }
+.wd-row.empty-inline { color: var(--muted); }
+.wd-plan { color: var(--muted); margin-top: 6px; white-space: pre-wrap; }
+.pt-fixed { color: var(--success); border: 1px solid var(--success); border-radius: 999px; padding: 1px 7px; font-size: 11px; font-weight: 700; margin-left: 6px; }
+.plan-table td.pt-done { padding: 8px 10px; text-align: center; font-size: 13px; font-weight: 700; color: var(--success); font-variant-numeric: tabular-nums; }
+.pt-fix-btn {
+  margin-left: 6px; cursor: pointer; font-family: inherit;
+  color: var(--success); background: none; border: 1px solid var(--success);
+  border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 700;
+}
+.pt-fix-btn.on { background: var(--success); color: #fff; }
+.pt-fix-btn:hover { background: var(--success-bg); }
+.pt-fix-btn.on:hover { background: var(--success); opacity: .85; }
+.plan-table .pt-breaks input {
+  border: none; border-radius: 0; background: none;
+  field-sizing: content; min-width: 128px; max-width: 380px;
+  min-height: 36px; padding: 8px 10px; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.plan-table .pt-breaks input:hover { background: var(--surface-2); }
+.plan-table .pt-breaks input:focus { outline: 2px solid var(--accent); outline-offset: -2px; background: #fff; }
+.plan-table .pt-breaks-ro { padding: 9px 10px; font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pt-worked-cell { font-weight: 700; color: var(--ink); white-space: nowrap; }
+.plan-table .pt-date .badge { margin-left: 6px; }
+.seg-row { display: flex; gap: 8px; margin-bottom: 10px; }
+.seg-row .preset-chip { min-height: 40px; }
