@@ -427,6 +427,13 @@ function Home({ me }: { me: Member }) {
     setEditTime2(isoHm(b.ended_at))
   }
 
+  // 時刻を指定して中抜けを追加（付け忘れの後入力用）
+  const openNewBreak = () => {
+    setEditing('newbreak')
+    setEditTime(isoHm(new Date().toISOString()))
+    setEditTime2('')
+  }
+
   const commitEdit = async () => {
     if (!editing) return
     if (editing === 'in') {
@@ -437,13 +444,33 @@ function Home({ me }: { me: Member }) {
       if (editTime) punchOut(hmToIso(editTime))
       return setEditing(null)
     }
-    // 中抜け: 開始・終了をまとめて更新（終了を空にすると「中抜け中」に戻る）
     setErr('')
+    if (editing === 'newbreak') {
+      if (!att || !editTime) return setEditing(null)
+      const { error } = await supabase.from('breaks').insert({
+        attendance_id: att.id,
+        started_at: hmToIso(editTime),
+        ended_at: editTime2 ? hmToIso(editTime2) : null,
+      })
+      if (error) return setErr(`中抜けを追加できませんでした（${error.message}）`)
+      setEditing(null)
+      return load()
+    }
+    // 中抜け: 開始・終了をまとめて更新（終了を空にすると「中抜け中」に戻る）
     const { error } = await supabase.from('breaks').update({
       ...(editTime ? { started_at: hmToIso(editTime) } : {}),
       ended_at: editTime2 ? hmToIso(editTime2) : null,
     }).eq('id', editing)
     if (error) return setErr(`休憩時刻を変更できませんでした（${error.message}）`)
+    setEditing(null)
+    load()
+  }
+
+  // 間違えて作った中抜けを削除
+  const deleteBreak = async (id: string) => {
+    setErr('')
+    const { error } = await supabase.from('breaks').delete().eq('id', id)
+    if (error) return setErr(`中抜けを削除できませんでした（${error.message}）`)
     setEditing(null)
     load()
   }
@@ -546,6 +573,7 @@ function Home({ me }: { me: Member }) {
                   <input type="time" aria-label="中抜け終了" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
                   <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
                   <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
+                  <button className="edit-delete" onClick={() => deleteBreak(b.id)}>削除</button>
                 </div>
               ) : (
                 <div key={b.id} className="btn-split chip">
@@ -563,6 +591,7 @@ function Home({ me }: { me: Member }) {
                   <input type="time" aria-label="中抜け終了" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
                   <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
                   <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
+                  <button className="edit-delete" onClick={() => deleteBreak(openBreak.id)}>削除</button>
                 </div>
               ) : (
                 <div className="btn-split">
@@ -573,8 +602,21 @@ function Home({ me }: { me: Member }) {
                     onClick={() => openBreakEdit(openBreak)}>✎</button>
                 </div>
               )
+            ) : editing === 'newbreak' ? (
+              <div className="btn btn-break btn-editing">
+                <span>中抜け</span>
+                <input type="time" autoFocus aria-label="中抜け開始" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
+                <span>–</span>
+                <input type="time" aria-label="中抜け終了（空なら中抜け中）" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
+                <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
+                <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
+              </div>
             ) : (
-              <button className="btn btn-break" onClick={startBreak}>中抜け・休憩を開始</button>
+              <div className="btn-split">
+                <button className="btn btn-break" onClick={startBreak}>中抜け・休憩を開始</button>
+                <button className="icon-btn on-chip" aria-label="時刻を指定して中抜けを追加（付け忘れの入力）"
+                  onClick={openNewBreak}>✎</button>
+              </div>
             ))}
           </div>
         )}

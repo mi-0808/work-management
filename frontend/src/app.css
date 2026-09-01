@@ -498,3 +498,9 @@ tr:last-child td { border-bottom: none; }
   .app { padding: 0; max-width: none; }
   body { background: #fff; }
 }
+
+.edit-delete {
+  border: none; border-radius: 10px; min-height: 44px; padding: 0 14px;
+  background: var(--danger-bg); color: var(--danger);
+  font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+}
