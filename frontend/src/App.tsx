@@ -1951,7 +1951,7 @@ const ICONS: Record<Tab, React.ReactNode> = {
 // 管理者は名簿、一般はプロフィールを4つ目に置く（管理者はアバターからプロフィールへ）
 const tabsFor = (role: Member['role']): { key: Tab; label: string }[] => [
   { key: 'home', label: 'ホーム' },
-  { key: 'report', label: '日報' },
+  { key: 'report', label: '稼働表' },
   { key: 'schedule', label: '予定' },
   role === 'admin'
     ? { key: 'members', label: '名簿' }
