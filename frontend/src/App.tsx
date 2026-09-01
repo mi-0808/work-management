@@ -1041,53 +1041,13 @@ function Members({ me }: { me: Member }) {
 
   return (
     <>
-      {isAdmin && (
-        <div className="card">
-          <h2>参加コード <span className="tag">メンバーに共有</span></h2>
-          <div className="join-code-row">
-            <div className="join-code">{code || '—'}</div>
-            <button className="btn-outline" onClick={copyCode}>{copied ? 'コピーしました' : 'コピー'}</button>
-          </div>
-          <div className="notice">
-            このコードを伝えれば、相手が自分でアカウントを作って参加できます。
-            メールアドレスを事前に聞く必要はありません（参加した人は「一般」として追加されます）
-          </div>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div className="card">
-          <h2>MyHood連携 <span className="tag">管理者設定</span></h2>
-          <label htmlFor="mh-url">MyHoodの投稿先URL</label>
-          <input id="mh-url" type="url" placeholder="https://myhood.example.com/..."
-            value={myhood} onChange={(e) => setMyhood(e.target.value)} />
-          <div className="form-actions">
-            <button className="btn-primary" style={{ margin: 0 }} onClick={saveMyhood}>保存</button>
-          </div>
-          {myhoodMsg && <div className="notice">{myhoodMsg}</div>}
-          <div className="notice">
-            設定すると、日報と今日の予定に「MyHoodに投稿」ボタンが表示され、動画での提出ができるようになります。
-            空にして保存すると連携を解除します
-          </div>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div className="card">
-          <h2>出勤簿の出力 <span className="tag">月末のCSV出力</span></h2>
-          <div className="draft-times">
-            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
-            <button className="btn-primary" style={{ margin: 0 }} onClick={exportCsv}>CSVをダウンロード</button>
-          </div>
-          <div className="notice">
-            全メンバーの1か月分を、現行の出勤簿スプレッドシートと同じ列構成
-            （出勤・ランチ・退勤・中抜け・総時間・実労働時間・業務内容）で出力します
-          </div>
-        </div>
-      )}
-
       <div className="card">
-        <h2>メンバー名簿 <span className="tag">{members.length}名</span></h2>
+        <h2>
+          メンバー名簿 <span className="tag">{members.length}名</span>
+          {isAdmin && !open && (
+            <button className="h2-action" onClick={() => setOpen(true)}>＋ 招待</button>
+          )}
+        </h2>
         {members.map((m, i) => (
           <div key={m.id} className="member-row">
             <div className="m-avatar member-av" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
@@ -1123,14 +1083,12 @@ function Members({ me }: { me: Member }) {
             </div>
           </div>
         ))}
-        {err && <div className="notice warn">{err}</div>}
-        {isAdmin && !open && (
-          <button className="btn-primary" onClick={() => setOpen(true)}>＋ メンバーを招待</button>
-        )}
+        {err && !open && <div className="notice warn">{err}</div>}
         {isAdmin && (
-          <div className="notice">
-            管理者はメンバーの招待、権限・所定勤務時間帯の変更ができます。
-            会社を管理できなくなるのを防ぐため、実際に参加している管理者が自分だけの間は一般に変更できません
+          <div className="join-code-subtle">
+            参加コード <b>{code || '—'}</b>
+            <button onClick={copyCode}>{copied ? 'コピーしました' : 'コピー'}</button>
+            <span className="join-code-hint">共有すれば相手が自分でアカウントを作って参加できます</span>
           </div>
         )}
       </div>
@@ -1159,7 +1117,7 @@ function Members({ me }: { me: Member }) {
           <div className="notice">
             メールアドレスが分かっている人向けです。登録したアドレスでアカウントを作成すると自動で参加し、
             ここで設定した名前と所定勤務時間帯が引き継がれます。
-            アドレスが分からない場合は上の参加コードを共有してください
+            アドレスが分からない場合は名簿の下にある参加コードを共有してください
           </div>
           <div className="form-actions">
             <button className="btn-primary" style={{ margin: 0 }}
@@ -1170,6 +1128,38 @@ function Members({ me }: { me: Member }) {
           </div>
         </div>
       )}
+
+      {isAdmin && (
+        <div className="card">
+          <h2>MyHood連携 <span className="tag">管理者設定</span></h2>
+          <label htmlFor="mh-url">MyHoodの投稿先URL</label>
+          <input id="mh-url" type="url" placeholder="https://myhood.example.com/..."
+            value={myhood} onChange={(e) => setMyhood(e.target.value)} />
+          <div className="form-actions">
+            <button className="btn-primary" style={{ margin: 0 }} onClick={saveMyhood}>保存</button>
+          </div>
+          {myhoodMsg && <div className="notice">{myhoodMsg}</div>}
+          <div className="notice">
+            設定すると、日報と今日の予定に「MyHoodに投稿」ボタンが表示され、動画での提出ができるようになります。
+            空にして保存すると連携を解除します
+          </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="card">
+          <h2>出勤簿の出力 <span className="tag">月末のCSV出力</span></h2>
+          <div className="draft-times">
+            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+            <button className="btn-primary" style={{ margin: 0 }} onClick={exportCsv}>CSVをダウンロード</button>
+          </div>
+          <div className="notice">
+            全メンバーの1か月分を、現行の出勤簿スプレッドシートと同じ列構成
+            （出勤・ランチ・退勤・中抜け・総時間・実労働時間・業務内容）で出力します
+          </div>
+        </div>
+      )}
+
     </>
   )
 }
