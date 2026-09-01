@@ -492,44 +492,48 @@ function Home({ me }: { me: Member }) {
         <div className="clock">
           {now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </div>
-        <div className="status-chip"><span className="dot" />{status}</div>
+        <div className="status-chip">
+          <span className={`dot ${openBreak ? 'away' : att?.clock_in && !att.clock_out ? 'on' : ''}`} />{status}
+        </div>
         {err && <div className="notice warn" style={{ position: 'relative', zIndex: 1 }}>{err}</div>}
         <div className="punch-row">
           {editing === 'in' ? (
             <div className="btn btn-in btn-editing">
               <span>出勤</span>
-              <input type="time" autoFocus value={editTime}
+              <input type="time" autoFocus aria-label="出勤時刻" value={editTime}
                 onChange={(e) => setEditTime(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && commitEdit()} />
-              <button className="edit-ok" onClick={commitEdit}>✓</button>
-              <button className="edit-cancel" onClick={() => setEditing(null)}>✕</button>
+              <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
+              <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
             </div>
           ) : (
-            <button className="btn btn-in" onClick={() => (att?.clock_in ? openEdit('in') : punchIn())}>
-              {att?.clock_in ? <>出勤 {fmtTime(att.clock_in)}<span className="pencil">✎</span></> : '出勤する'}
-            </button>
+            <div className="btn-split">
+              <button className="btn btn-in" disabled={!!att?.clock_in} onClick={punchIn}>
+                {att?.clock_in ? `出勤 ${fmtTime(att.clock_in)}` : '出勤する'}
+              </button>
+              <button className="icon-btn on-in" aria-label="出勤時刻を指定・修正"
+                onClick={() => openEdit('in')}>✎</button>
+            </div>
           )}
           {editing === 'out' ? (
             <div className="btn btn-out btn-editing">
               <span>退勤</span>
-              <input type="time" autoFocus value={editTime}
+              <input type="time" autoFocus aria-label="退勤時刻" value={editTime}
                 onChange={(e) => setEditTime(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && commitEdit()} />
-              <button className="edit-ok" onClick={commitEdit}>✓</button>
-              <button className="edit-cancel" onClick={() => setEditing(null)}>✕</button>
+              <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
+              <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
             </div>
-          ) : att?.clock_out ? (
-            <button className="btn btn-out" onClick={resume}>
-              勤務を再開
-              <span className="pencil" title="退勤時刻を修正"
-                onClick={(e) => { e.stopPropagation(); openEdit('out') }}>✎</span>
-            </button>
           ) : (
-            <button className="btn btn-out" disabled={!!openBreak} onClick={() => punchOut()}>
-              退勤する
-              <span className="pencil" title="時刻を指定して退勤（押し忘れの修正）"
-                onClick={(e) => { e.stopPropagation(); openEdit('out') }}>✎</span>
-            </button>
+            <div className="btn-split">
+              {att?.clock_out ? (
+                <button className="btn btn-out" onClick={resume}>勤務を再開</button>
+              ) : (
+                <button className="btn btn-out" disabled={!!openBreak} onClick={() => punchOut()}>退勤する</button>
+              )}
+              <button className="icon-btn on-out" aria-label="退勤時刻を指定・修正（押し忘れの修正）"
+                onClick={() => openEdit('out')}>✎</button>
+            </div>
           )}
         </div>
         {att?.clock_in && (
@@ -538,34 +542,37 @@ function Home({ me }: { me: Member }) {
               editing === b.id ? (
                 <div key={b.id} className="btn btn-break btn-editing">
                   <span>中抜け</span>
-                  <input type="time" autoFocus value={editTime} onChange={(e) => setEditTime(e.target.value)} />
+                  <input type="time" autoFocus aria-label="中抜け開始" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
                   <span>–</span>
-                  <input type="time" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
-                  <button className="edit-ok" onClick={commitEdit}>✓</button>
-                  <button className="edit-cancel" onClick={() => setEditing(null)}>✕</button>
+                  <input type="time" aria-label="中抜け終了" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
+                  <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
+                  <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
                 </div>
               ) : (
-                <button key={b.id} className="btn btn-break btn-chip" title="タップして時刻を修正"
-                  onClick={() => openBreakEdit(b)}>
-                  中抜け {fmtTime(b.started_at)}–{fmtTime(b.ended_at)}<span className="pencil">✎</span>
-                </button>
+                <div key={b.id} className="btn-split chip">
+                  <span className="btn btn-chip">中抜け {fmtTime(b.started_at)}–{fmtTime(b.ended_at)}</span>
+                  <button className="icon-btn on-chip" aria-label="この中抜けの時刻を修正"
+                    onClick={() => openBreakEdit(b)}>✎</button>
+                </div>
               ))}
             {!att.clock_out && (openBreak ? (
               editing === openBreak.id ? (
                 <div className="btn btn-break btn-editing">
                   <span>中抜け</span>
-                  <input type="time" autoFocus value={editTime} onChange={(e) => setEditTime(e.target.value)} />
+                  <input type="time" autoFocus aria-label="中抜け開始" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
                   <span>–</span>
-                  <input type="time" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
-                  <button className="edit-ok" onClick={commitEdit}>✓</button>
-                  <button className="edit-cancel" onClick={() => setEditing(null)}>✕</button>
+                  <input type="time" aria-label="中抜け終了" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
+                  <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
+                  <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
                 </div>
               ) : (
-                <button className="btn btn-break-end" onClick={endBreak}>
-                  中抜けを終了（{fmtTime(openBreak.started_at)}〜）
-                  <span className="pencil" title="開始時刻を修正"
-                    onClick={(e) => { e.stopPropagation(); openBreakEdit(openBreak) }}>✎</span>
-                </button>
+                <div className="btn-split">
+                  <button className="btn btn-break-end" onClick={endBreak}>
+                    中抜けを終了（{fmtTime(openBreak.started_at)}〜）
+                  </button>
+                  <button className="icon-btn on-break" aria-label="中抜けの開始時刻を修正"
+                    onClick={() => openBreakEdit(openBreak)}>✎</button>
+                </div>
               )
             ) : (
               <button className="btn btn-break" onClick={startBreak}>中抜け・休憩を開始</button>
@@ -617,7 +624,7 @@ function Home({ me }: { me: Member }) {
                     <td>{bm > 0 ? `${Math.round(bm)}分` : '—'}</td>
                     <td>{a.clock_in ? workedLabel(a) : '—'}</td>
                     <td>
-                      {(a.auto_in || a.auto_out) && <span className="badge badge-yellow">自動補完</span>}{' '}
+                      {(a.auto_in || a.auto_out) && <span className="badge badge-yellow">⚠ 自動補完</span>}{' '}
                       <span className="badge badge-blue">{a.clock_out ? '退勤済み' : a.clock_in ? '勤務中' : '—'}</span>
                     </td>
                   </tr>
