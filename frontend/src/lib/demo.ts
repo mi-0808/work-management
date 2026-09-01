@@ -59,6 +59,13 @@ for (const [mi, m] of DEMO_MEMBERS.slice(0, 3).entries()) {
   if (mi === 2) breaks.push({ id: uid(), attendance_id: a.id, started_at: new Date(Date.now() - 20 * 60000).toISOString(), ended_at: null, note: null })
 }
 
+// 鈴木は前日出勤したまま退勤し忘れ（日跨ぎ稼働のデモ）
+attendances.push({
+  id: uid(), member_id: 'm4', work_date: dayOffset(-1),
+  clock_in: at(dayOffset(-1), 18, 0), clock_out: null,
+  auto_in: false, auto_out: false, plan: null, plan_video: null,
+})
+
 const daily_reports: Report[] = DEMO_MEMBERS.slice(0, 4).flatMap((m, mi) =>
   [3, 2, 1].map((i) => ({
     id: uid(), member_id: m.id, work_date: dayOffset(-i),
