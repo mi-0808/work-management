@@ -111,7 +111,7 @@ body {
 }
 
 textarea, input[type="text"], input[type="email"], input[type="password"],
-input[type="date"], input[type="time"], select {
+input[type="date"], input[type="time"], input[type="url"], input[type="month"], select {
   width: 100%; border: 1px solid var(--line); border-radius: 10px;
   padding: 10px 12px; font-size: 14px; font-family: inherit; background: #fbfcfe;
   color: var(--ink);

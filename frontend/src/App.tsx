@@ -8,6 +8,14 @@ type Tab = 'home' | 'report' | 'schedule' | 'members' | 'profile'
 
 const fmtTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'
+const isoHm = (iso: string | null) => (iso ? new Date(iso).toTimeString().slice(0, 5) : '')
+// "HH:MM" → 今日のその時刻のISO
+const hmToIso = (t: string) => {
+  const d = new Date()
+  const [h, m] = t.split(':').map(Number)
+  d.setHours(h, m, 0, 0)
+  return d.toISOString()
+}
 const hm = (t: string) => t.slice(0, 5) // "09:00:00" → "09:00"
 const toMin = (t: string) => {
   const [h, m] = t.split(':').map(Number)
@@ -39,6 +47,16 @@ function useClock() {
     return () => clearInterval(id)
   }, [])
   return now
+}
+
+// 会社のMyHood投稿先URL（管理者が名簿タブで設定。未設定ならnull）
+function useMyhood(companyId: string) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    supabase.from('companies').select('myhood_url').eq('id', companyId).maybeSingle()
+      .then(({ data }) => setUrl((data as { myhood_url?: string | null } | null)?.myhood_url ?? null))
+  }, [companyId])
+  return url
 }
 
 /* ---------- 認証 ---------- */
@@ -333,6 +351,9 @@ function Home({ me }: { me: Member }) {
   const [week, setWeek] = useState<Attendance[]>([])
   const [plan, setPlan] = useState('')
   const [err, setErr] = useState('')
+  // 打刻前に時刻を指定したいとき用（空なら「今」で打刻）
+  const [pending, setPending] = useState<{ clock_in?: string; clock_out?: string }>({})
+  const myhood = useMyhood(me.company_id)
 
   const load = useCallback(async () => {
     const { data } = await supabase
@@ -362,14 +383,25 @@ function Home({ me }: { me: Member }) {
       { onConflict: 'member_id,work_date' },
     )
     if (error) return setErr(`保存できませんでした（${error.message}）。ログインし直してもう一度お試しください`)
+    setPending({})
     load()
   }
 
-  const punchIn = () => save({ clock_in: new Date().toISOString() })
+  const punchIn = () =>
+    save({ clock_in: pending.clock_in ? hmToIso(pending.clock_in) : new Date().toISOString() })
+
+  // 打刻済みの時刻は入力で即修正、未打刻なら指定時刻として保持しボタンで打刻
+  const changeClock = (key: 'clock_in' | 'clock_out', t: string) => {
+    if (!t) return
+    if (att?.[key]) save({ [key]: hmToIso(t), [key === 'clock_in' ? 'auto_in' : 'auto_out']: false })
+    else setPending((p) => ({ ...p, [key]: t }))
+  }
 
   // 退勤のみ → 出勤を所定開始時刻で自動補完
   const punchOut = () => {
-    const patch: Partial<Attendance> = { clock_out: new Date().toISOString() }
+    const patch: Partial<Attendance> = {
+      clock_out: pending.clock_out ? hmToIso(pending.clock_out) : new Date().toISOString(),
+    }
     if (!att?.clock_in) {
       const d = new Date()
       const [h, m] = hm(me.work_start).split(':').map(Number)
@@ -401,6 +433,23 @@ function Home({ me }: { me: Member }) {
       .update({ ended_at: new Date().toISOString() }).eq('id', openBreak.id)
     if (error) return setErr(`休憩を終了できませんでした（${error.message}）`)
     load()
+  }
+
+  // 中抜けの開始・終了時刻を手入力で修正
+  const editBreakTime = async (id: string, key: 'started_at' | 'ended_at', t: string) => {
+    if (!t) return
+    setErr('')
+    const { error } = await supabase.from('breaks').update({ [key]: hmToIso(t) }).eq('id', id)
+    if (error) return setErr(`休憩時刻を変更できませんでした（${error.message}）`)
+    load()
+  }
+
+  // 動画を撮る（選ぶ）と予定を提出扱いに。動画本体はMyHoodへ投稿してもらう
+  // ponytail: ファイル名の記録のみ。MyHoodのAPI仕様が分かったら直接アップロードに置き換え
+  const planVideo = (file: File | undefined) => {
+    if (!file) return
+    save({ plan_video: file.name, plan: plan || '動画で提出' })
+    if (myhood) window.open(myhood, '_blank')
   }
 
   return (
@@ -441,13 +490,52 @@ function Home({ me }: { me: Member }) {
       </div>
 
       <div className="card">
+        <h2>時刻の指定・修正 <span className="tag">打刻前は指定、打刻後は修正</span></h2>
+        <div className="draft-times">
+          <label style={{ margin: 0 }}>出勤</label>
+          <input type="time" value={att?.clock_in ? isoHm(att.clock_in) : pending.clock_in ?? ''}
+            onChange={(e) => changeClock('clock_in', e.target.value)} />
+          <label style={{ margin: 0 }}>退勤</label>
+          <input type="time" value={att?.clock_out ? isoHm(att.clock_out) : pending.clock_out ?? ''}
+            onChange={(e) => changeClock('clock_out', e.target.value)} />
+        </div>
+        {(att?.breaks ?? []).map((b, i) => (
+          <div className="draft-times" key={b.id}>
+            <label style={{ margin: 0 }}>中抜け{i + 1}</label>
+            <input type="time" value={isoHm(b.started_at)}
+              onChange={(e) => editBreakTime(b.id, 'started_at', e.target.value)} />
+            <span>–</span>
+            <input type="time" value={isoHm(b.ended_at)}
+              onChange={(e) => editBreakTime(b.id, 'ended_at', e.target.value)} />
+          </div>
+        ))}
+        <div className="notice">
+          時刻を選んでから「出勤する」「退勤する」を押すと、その時刻で打刻されます。
+          打刻済みの時刻や中抜けの開始・終了は、ここで直接修正できます
+        </div>
+      </div>
+
+      <div className="card">
         <h2>今日の予定 <span className="tag">出勤時に登録</span></h2>
         <textarea
           placeholder="今日やる予定を入力（例: 新規案件の見積もり作成、15時から定例MTG）"
           value={plan}
           onChange={(e) => setPlan(e.target.value)}
         />
-        <button className="btn-primary" disabled={!plan} onClick={savePlan}>予定を保存</button>
+        <div className="form-actions">
+          <button className="btn-primary" style={{ margin: 0 }} disabled={!plan} onClick={savePlan}>予定を保存</button>
+          <label className="btn-outline" style={{ cursor: 'pointer' }}>
+            🎥 動画で提出
+            <input type="file" accept="video/*" capture hidden
+              onChange={(e) => planVideo(e.target.files?.[0])} />
+          </label>
+          {myhood && (
+            <a className="btn-outline" href={myhood} target="_blank" rel="noreferrer">MyHoodに投稿</a>
+          )}
+        </div>
+        {att?.plan_video && (
+          <div className="notice">動画（{att.plan_video}）で提出済みです。動画はMyHoodに投稿してください</div>
+        )}
       </div>
 
       <div className="card">
@@ -494,6 +582,7 @@ function Report({ me }: { me: Member }) {
   const [history, setHistory] = useState<ReportRow[]>([])
   const [saved, setSaved] = useState(false)
   const [err, setErr] = useState('')
+  const myhood = useMyhood(me.company_id)
 
   const load = useCallback(async () => {
     const [{ data: reports }, { data: att }] = await Promise.all([
@@ -509,15 +598,23 @@ function Report({ me }: { me: Member }) {
 
   useEffect(() => { load() }, [load])
 
-  const submit = async () => {
+  const submit = async (video?: string) => {
     setErr('')
     const { error } = await supabase.from('daily_reports').upsert(
-      { member_id: me.id, work_date: today(), body },
+      { member_id: me.id, work_date: today(), body: body || '動画で提出', ...(video ? { video } : {}) },
       { onConflict: 'member_id,work_date' },
     )
     if (error) return setErr(`提出できませんでした（${error.message}）`)
     setSaved(true)
     load()
+  }
+
+  // 動画を撮る（選ぶ）と日報を提出扱いに。動画本体はMyHoodへ投稿してもらう
+  // ponytail: ファイル名の記録のみ。MyHoodのAPI仕様が分かったら直接アップロードに置き換え
+  const submitVideo = (file: File | undefined) => {
+    if (!file) return
+    submit(file.name)
+    if (myhood) window.open(myhood, '_blank')
   }
 
   return (
@@ -532,9 +629,20 @@ function Report({ me }: { me: Member }) {
         <textarea placeholder="今日行った業務を入力" value={body}
           onChange={(e) => { setBody(e.target.value); setSaved(false) }} />
         {err && <div className="notice warn">{err}</div>}
-        <button className="btn-primary" disabled={!body || saved} onClick={submit}>
-          {saved ? '提出済み ✓' : '日報を提出'}
-        </button>
+        <div className="form-actions">
+          <button className="btn-primary" style={{ margin: 0 }} disabled={!body || saved} onClick={() => submit()}>
+            {saved ? '提出済み ✓' : '日報を提出'}
+          </button>
+          <label className="btn-outline" style={{ cursor: 'pointer' }}>
+            🎥 動画で提出
+            <input type="file" accept="video/*" capture hidden
+              onChange={(e) => submitVideo(e.target.files?.[0])} />
+          </label>
+          {myhood && (
+            <a className="btn-outline" href={myhood} target="_blank" rel="noreferrer">MyHoodに投稿</a>
+          )}
+        </div>
+        {myhood && <div className="notice">動画で提出すると提出扱いになります。動画はMyHoodに投稿してください</div>}
       </div>
 
       <div className="card">
@@ -545,7 +653,7 @@ function Report({ me }: { me: Member }) {
               <div key={r.id} className="list-item">
                 <div className="when">{r.work_date.slice(5).replace('-', '/')}</div>
                 <div className="title">{r.body}</div>
-                <span className="badge badge-blue">提出済</span>
+                <span className="badge badge-blue">{r.video ? '動画提出' : '提出済'}</span>
               </div>
             ))}
           </div>
@@ -744,15 +852,19 @@ function Members({ me }: { me: Member }) {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(BLANK_INVITE)
   const [busy, setBusy] = useState(false)
+  const [myhood, setMyhood] = useState('')
+  const [myhoodMsg, setMyhoodMsg] = useState('')
+  const [month, setMonth] = useState(today().slice(0, 7)) // "YYYY-MM"
   const isAdmin = me.role === 'admin'
 
   const load = useCallback(async () => {
     const [{ data: rows }, { data: company }] = await Promise.all([
       supabase.from('members').select('*').eq('company_id', me.company_id).order('created_at'),
-      supabase.from('companies').select('join_code').eq('id', me.company_id).maybeSingle(),
+      supabase.from('companies').select('join_code, myhood_url').eq('id', me.company_id).maybeSingle(),
     ])
     setMembers(rows ?? [])
     setCode(company?.join_code ?? '')
+    setMyhood((company as { myhood_url?: string | null } | null)?.myhood_url ?? '')
   }, [me.company_id])
 
   useEffect(() => { load() }, [load])
@@ -774,6 +886,74 @@ function Members({ me }: { me: Member }) {
     const { error } = await supabase.from('members').update({ role }).eq('id', m.id)
     if (error) return setErr(error.message)
     load()
+  }
+
+  const saveMyhood = async () => {
+    setMyhoodMsg('')
+    const { error } = await supabase.from('companies')
+      .update({ myhood_url: myhood || null }).eq('id', me.company_id)
+    setMyhoodMsg(error ? '保存できませんでした（管理者のみ変更可能です）' : '保存しました')
+  }
+
+  // 出勤簿CSV（現行スプレッドシートの列構成に合わせる。最初の中抜け＝ランチ扱い）
+  const exportCsv = async () => {
+    const [y, mo] = month.split('-').map(Number)
+    const from = `${month}-01`
+    const to = new Date(y, mo, 1).toLocaleDateString('sv-SE')
+    const atts: Attendance[] = []
+    const reps: ReportRow[] = []
+    // ponytail: メンバーごとに直列fetch。人数が増えて遅くなったらin()で一括に
+    for (const m of members) {
+      const [{ data: a }, { data: r }] = await Promise.all([
+        supabase.from('attendances').select('*, breaks(*)').eq('member_id', m.id)
+          .gte('work_date', from).lt('work_date', to),
+        supabase.from('daily_reports').select('*').eq('member_id', m.id)
+          .gte('work_date', from).lt('work_date', to),
+      ])
+      atts.push(...((a as Attendance[]) ?? []))
+      reps.push(...((r as ReportRow[]) ?? []))
+    }
+    const t = (iso?: string | null) => (iso ? new Date(iso).toTimeString().slice(0, 5) : '')
+    const dur = (min: number) =>
+      min > 0 ? `${Math.floor(min / 60)}:${String(Math.round(min % 60)).padStart(2, '0')}` : ''
+    const bMin = (b?: Break) =>
+      b?.ended_at ? (new Date(b.ended_at).getTime() - new Date(b.started_at).getTime()) / 60000 : 0
+    const rows = [[
+      '氏名', '日付', '曜日', '出勤', 'ランチ入り', 'ランチ戻り', '退勤',
+      '中抜け開始1', '中抜け戻り1', '中抜け開始2', '中抜け戻り2', '中抜け開始3', '中抜け戻り3',
+      '総時間', '休憩', '中抜け1', '中抜け2', '実労働時間', '業務内容',
+    ]]
+    const days = new Date(y, mo, 0).getDate()
+    for (const m of members) {
+      for (let d = 1; d <= days; d++) {
+        const date = `${month}-${String(d).padStart(2, '0')}`
+        const dow = '日月火水木金土'[new Date(y, mo - 1, d).getDay()]
+        const a = atts.find((x) => x.member_id === m.id && x.work_date === date)
+        const bs = [...(a?.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
+        const gross = a?.clock_in && a?.clock_out
+          ? (new Date(a.clock_out).getTime() - new Date(a.clock_in).getTime()) / 60000 : 0
+        const allBreaks = bs.reduce((s, b) => s + bMin(b), 0)
+        const rep = reps.find((r) => r.member_id === m.id && r.work_date === date)
+        rows.push([
+          m.name, date, dow,
+          t(a?.clock_in), t(bs[0]?.started_at), t(bs[0]?.ended_at), t(a?.clock_out),
+          t(bs[1]?.started_at), t(bs[1]?.ended_at), t(bs[2]?.started_at), t(bs[2]?.ended_at),
+          t(bs[3]?.started_at), t(bs[3]?.ended_at),
+          dur(gross), dur(bMin(bs[0])), dur(bMin(bs[1])), dur(bMin(bs[2])),
+          dur(Math.max(0, gross - allBreaks)),
+          rep?.body ?? a?.plan ?? '',
+        ])
+      }
+    }
+    const csv = '\uFEFF' + rows
+      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+      .join('\r\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    const el = document.createElement('a')
+    el.href = url
+    el.download = `出勤簿_${month}.csv`
+    el.click()
+    URL.revokeObjectURL(url)
   }
 
   const invite = async () => {
@@ -802,6 +982,37 @@ function Members({ me }: { me: Member }) {
           <div className="notice">
             このコードを伝えれば、相手が自分でアカウントを作って参加できます。
             メールアドレスを事前に聞く必要はありません（参加した人は「一般」として追加されます）
+          </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="card">
+          <h2>MyHood連携 <span className="tag">管理者設定</span></h2>
+          <label htmlFor="mh-url">MyHoodの投稿先URL</label>
+          <input id="mh-url" type="url" placeholder="https://myhood.example.com/..."
+            value={myhood} onChange={(e) => setMyhood(e.target.value)} />
+          <div className="form-actions">
+            <button className="btn-primary" style={{ margin: 0 }} onClick={saveMyhood}>保存</button>
+          </div>
+          {myhoodMsg && <div className="notice">{myhoodMsg}</div>}
+          <div className="notice">
+            設定すると、日報と今日の予定に「MyHoodに投稿」ボタンが表示され、動画での提出ができるようになります。
+            空にして保存すると連携を解除します
+          </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="card">
+          <h2>出勤簿の出力 <span className="tag">月末のCSV出力</span></h2>
+          <div className="draft-times">
+            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+            <button className="btn-primary" style={{ margin: 0 }} onClick={exportCsv}>CSVをダウンロード</button>
+          </div>
+          <div className="notice">
+            全メンバーの1か月分を、現行の出勤簿スプレッドシートと同じ列構成
+            （出勤・ランチ・退勤・中抜け・総時間・実労働時間・業務内容）で出力します
           </div>
         </div>
       )}

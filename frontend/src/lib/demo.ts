@@ -15,7 +15,7 @@ const at = (date: string, h: number, m = 0) => {
   return d.toISOString()
 }
 
-const COMPANY = { id: 'c1', name: 'ひまわり事務機', icon: '🌻', join_code: 'DEMO01' }
+const COMPANY = { id: 'c1', name: 'ひまわり事務機', icon: '🌻', join_code: 'DEMO01', myhood_url: 'https://myhood.example.com/himawari' }
 
 export const DEMO_MEMBERS: Member[] = [
   { id: 'm1', company_id: 'c1', user_id: 'u1', name: '高橋 誠', email: 'takahashi@example.com', member_type: 'internal', role: 'admin', status: 'active', work_start: '09:00:00', work_end: '18:00:00' },
@@ -42,7 +42,7 @@ for (const [mi, m] of DEMO_MEMBERS.slice(0, 4).entries()) {
       clock_in: at(d, 9 + (mi % 2), (mi * 7) % 30),
       clock_out: at(d, 18, (mi * 11) % 45),
       auto_in: i === 3 && mi === 2, auto_out: false,
-      plan: PLANS[(mi + i) % PLANS.length],
+      plan: PLANS[(mi + i) % PLANS.length], plan_video: null,
     }
     attendances.push(a)
     if (i % 2 === 0) breaks.push({ id: uid(), attendance_id: a.id, started_at: at(d, 12), ended_at: at(d, 13), note: null })
@@ -53,7 +53,7 @@ for (const [mi, m] of DEMO_MEMBERS.slice(0, 3).entries()) {
   const a: Attendance = {
     id: uid(), member_id: m.id, work_date: today(),
     clock_in: at(today(), 9, mi * 5), clock_out: null,
-    auto_in: false, auto_out: false, plan: PLANS[mi],
+    auto_in: false, auto_out: false, plan: PLANS[mi], plan_video: null,
   }
   attendances.push(a)
   if (mi === 2) breaks.push({ id: uid(), attendance_id: a.id, started_at: new Date(Date.now() - 20 * 60000).toISOString(), ended_at: null, note: null })
@@ -63,6 +63,7 @@ const daily_reports: Report[] = DEMO_MEMBERS.slice(0, 4).flatMap((m, mi) =>
   [3, 2, 1].map((i) => ({
     id: uid(), member_id: m.id, work_date: dayOffset(-i),
     body: `${PLANS[(mi + i) % PLANS.length]}を完了。特に問題なし。`,
+    video: null,
     submitted_at: at(dayOffset(-i), 18, 30),
   })))
 

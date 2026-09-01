@@ -44,6 +44,7 @@ export type Attendance = {
   auto_in: boolean
   auto_out: boolean
   plan: string | null
+  plan_video: string | null // 動画提出のファイル名（あれば提出扱い）
   breaks?: Break[]
 }
 
@@ -71,6 +72,7 @@ export type Report = {
   member_id: string
   work_date: string
   body: string
+  video: string | null // 動画提出のファイル名（あれば提出扱い）
   submitted_at: string
 }
 
