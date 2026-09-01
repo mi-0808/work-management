@@ -620,3 +620,10 @@ tr:last-child td { border-bottom: none; }
 .plan-table .pt-date .badge { margin-left: 6px; }
 .seg-row { display: flex; gap: 8px; margin-bottom: 10px; }
 .seg-row .preset-chip { min-height: 40px; }
+.pt-break-row { display: flex; align-items: center; }
+.pt-break-del {
+  border: none; background: none; cursor: pointer; color: var(--muted);
+  font-size: 12px; min-width: 28px; min-height: 28px; border-radius: 6px;
+}
+.pt-break-del:hover { color: var(--danger); background: var(--danger-bg); }
+.plan-table .pt-break-add::placeholder { color: var(--text-faint); }

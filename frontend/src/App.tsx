@@ -1029,18 +1029,31 @@ function KintaiTable({ me }: { me: Member }) {
                             const v = normTime(e.target.value)
                             if (v !== (a.clock_out ? fmtTime(a.clock_out) : '')) saveActual(a.work_date, 'clock_out', v)
                           }} /></td>
-                        {/* 中抜けは1件1欄。末尾の空欄に入力すると追加、消すと削除 */}
+                        {/* 中抜けは1件1欄。✕で削除、一番下の欄に入力すると追加 */}
                         <td className="pt-breaks" key={`br-${a.id}-${fmtBreaks(a)}`}>
-                          {[...breakList(a), ''].map((val, i) => (
-                            <input key={`${a.id}-${i}-${val}`} type="text" inputMode="numeric"
-                              placeholder="1200-1300" defaultValue={val}
-                              aria-label={`${fmtDate(a.work_date)}の中抜け${i + 1}（1200-1300形式）`}
-                              onBlur={(e) => {
-                                const all = [...e.currentTarget.closest('td')!.querySelectorAll('input')]
-                                  .map((x) => x.value.trim()).filter(Boolean).join(', ')
-                                if (all !== fmtBreaks(a)) saveBreaks(a, all)
-                              }} />
+                          {breakList(a).map((val, i) => (
+                            <div className="pt-break-row" key={`${a.id}-${i}-${val}`}>
+                              <input type="text" inputMode="numeric" defaultValue={val}
+                                aria-label={`${fmtDate(a.work_date)}の中抜け${i + 1}（1200-1300形式）`}
+                                onBlur={(e) => {
+                                  const rest = breakList(a).filter((_, j) => j !== i)
+                                  const v = e.target.value.trim()
+                                  const all = (v ? [...rest, v] : rest).join(', ')
+                                  if (all !== fmtBreaks(a)) saveBreaks(a, all)
+                                }} />
+                              <button className="pt-break-del" aria-label={`中抜け${i + 1}を削除`}
+                                onClick={() => saveBreaks(a, breakList(a).filter((_, j) => j !== i).join(', '))}>✕</button>
+                            </div>
                           ))}
+                          <input type="text" inputMode="numeric" className="pt-break-add"
+                            placeholder="＋ 1200-1300 で追加"
+                            aria-label={`${fmtDate(a.work_date)}に中抜けを追加（1200-1300形式）`}
+                            onBlur={(e) => {
+                              const v = e.target.value.trim()
+                              if (!v) return
+                              e.target.value = ''
+                              saveBreaks(a, [...breakList(a), v].join(', '))
+                            }} />
                         </td>
                       </>
                     )}
