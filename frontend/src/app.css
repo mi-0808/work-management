@@ -618,3 +618,5 @@ tr:last-child td { border-bottom: none; }
 .plan-table .pt-breaks-ro { padding: 9px 10px; font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .pt-worked-cell { font-weight: 700; color: var(--ink); white-space: nowrap; }
 .plan-table .pt-date .badge { margin-left: 6px; }
+.seg-row { display: flex; gap: 8px; margin-bottom: 10px; }
+.seg-row .preset-chip { min-height: 40px; }

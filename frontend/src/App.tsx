@@ -742,9 +742,7 @@ function Home({ me }: { me: Member }) {
 
       <TodayMeetings me={me} />
       <WeekPlan me={me} />
-      <PlanRows me={me} />
-
-      <KintaiTable me={me} />
+      <PlanKintai me={me} />
     </>
   )
 }
@@ -1034,6 +1032,24 @@ function KintaiTable({ me }: { me: Member }) {
   )
 }
 
+/* ---------- 稼働予定表⇄勤怠記録の切り替え表示 ---------- */
+function PlanKintai({ me }: { me: Member }) {
+  const [view, setView] = useState<'plan' | 'kintai'>('plan')
+  return (
+    <>
+      <div className="seg-row" role="tablist" aria-label="表の切り替え">
+        <button role="tab" aria-selected={view === 'plan'}
+          className={`preset-chip ${view === 'plan' ? 'sel' : ''}`}
+          onClick={() => setView('plan')}>稼働予定表</button>
+        <button role="tab" aria-selected={view === 'kintai'}
+          className={`preset-chip ${view === 'kintai' ? 'sel' : ''}`}
+          onClick={() => setView('kintai')}>勤怠記録</button>
+      </div>
+      {view === 'plan' ? <PlanRows me={me} /> : <KintaiTable me={me} />}
+    </>
+  )
+}
+
 /* ---------- 日報 ---------- */
 function Report({ me }: { me: Member }) {
   const [body, setBody] = useState('')
@@ -1080,8 +1096,7 @@ function Report({ me }: { me: Member }) {
 
   return (
     <>
-      <PlanRows me={me} />
-      <KintaiTable me={me} />
+      <PlanKintai me={me} />
       {!showReports && (
         <button className="btn-outline" style={{ margin: '0 auto', display: 'block' }}
           onClick={() => setShowReports(true)}>日報を書く・過去の日報を見る</button>
