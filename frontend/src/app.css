@@ -548,12 +548,26 @@ tr:last-child td { border-bottom: none; }
 .log-note-edit { margin: 4px 0 8px 64px; }
 .log-note-edit input[type="text"] { flex: 1; width: auto; }
 
-/* 日報タブ: 稼働予定とやること */
-.plan-row { border-bottom: 1px solid var(--line); padding: 12px 0; }
-.plan-row:last-of-type { border-bottom: none; }
-.plan-row-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
-.plan-row-head b { min-width: 84px; font-variant-numeric: tabular-nums; }
-.plan-row-head .draft-times { margin: 0; }
-.plan-row-head .draft-times input { width: 104px; }
-.plan-save { margin-left: auto; min-height: 36px; padding: 5px 14px; font-size: 12px; }
-.plan-row textarea { min-height: 60px; }
+/* 日報タブ: 稼働予定とやること（Excel表風のシンプル入力） */
+.plan-table-wrap { overflow-x: auto; }
+.plan-table { border: 1px solid var(--line); }
+.plan-table th { padding: 6px 8px; }
+.plan-table td { padding: 4px 6px; vertical-align: top; }
+.plan-table .pt-date { white-space: nowrap; font-weight: 700; padding-top: 12px; }
+.plan-table input.pt-time {
+  width: 64px; min-height: 36px; padding: 6px; text-align: center;
+  font-variant-numeric: tabular-nums; border-radius: 6px;
+}
+.plan-table .pt-plan { width: 100%; min-width: 220px; }
+.plan-table .pt-plan textarea {
+  min-height: 36px; padding: 6px 8px; border-radius: 6px; field-sizing: content;
+}
+.plan-save { min-height: 36px; min-width: 52px; padding: 5px 10px; font-size: 12px; border-width: 1px; border-radius: 8px; }
+.month-nav { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 15px; }
+.month-nav b { min-width: 96px; text-align: center; font-variant-numeric: tabular-nums; }
+.month-nav button {
+  border: 1px solid var(--line); background: #fff; cursor: pointer; font-family: inherit;
+  border-radius: 8px; min-width: 44px; min-height: 44px; font-size: 12px; color: var(--muted);
+}
+.month-nav button:hover { background: var(--surface-2); color: var(--ink); }
+.plan-table .pt-today td, .plan-table tr.pt-today .pt-date { background: var(--accent-tint); }

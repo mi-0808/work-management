@@ -674,7 +674,9 @@ function Home({ me }: { me: Member }) {
         {week.length === 0 ? <div className="empty">まだ勤怠記録がありません</div> : (
           week.map((a) => {
             const bm = breakMinutes(a.breaks)
-            const body = reports.find((r) => r.work_date === a.work_date)?.body ?? ''
+            // 稼働予定表の「やること」と同期: 実績(body)が未記入ならやること(plan)を表示・編集の下書きにする
+            const rep = reports.find((r) => r.work_date === a.work_date)
+            const body = rep?.body || rep?.plan || ''
             return (
               <div key={a.id} className="log-entry">
                 <div className="log-row">
@@ -714,19 +716,37 @@ function Home({ me }: { me: Member }) {
   )
 }
 
-/* ---------- 稼働予定とやること（日報タブ内・自己管理用） ---------- */
+/* ---------- 稼働予定表（日報タブ内・自己管理用。月単位で切り替え） ---------- */
 function PlanRows({ me }: { me: Member }) {
   const [rows, setRows] = useState<ReportRow[]>([])
-  const [newDate, setNewDate] = useState('')
+  const [month, setMonth] = useState(today().slice(0, 7)) // "YYYY-MM"
   const [err, setErr] = useState('')
   const [savedAt, setSavedAt] = useState('') // 直近保存した行のwork_date（✓表示用）
 
+  const blank = useCallback((date: string): ReportRow => ({
+    id: '', member_id: me.id, work_date: date, body: '', video: null,
+    submitted_at: '', plan: '', planned_start: '', planned_end: '',
+  } as ReportRow), [me.id])
+
+  // 選択月の全日を並べ、保存済み行を重ねる（Excelの月シートのイメージ）
   const load = useCallback(async () => {
+    const [y, m] = month.split('-').map(Number)
+    const from = `${month}-01`
+    const to = new Date(y, m, 1).toLocaleDateString('sv-SE').slice(0, 7) + '-01'
     const { data } = await supabase.from('daily_reports').select('*').eq('member_id', me.id)
-      .gte('work_date', today()).order('work_date', { ascending: true })
-    setRows((data as ReportRow[]) ?? [])
-  }, [me.id])
+      .gte('work_date', from).lt('work_date', to).order('work_date', { ascending: true })
+    const merged = new Map<string, ReportRow>()
+    const days = new Date(y, m, 0).getDate()
+    for (let d = 1; d <= days; d++) merged.set(`${month}-${String(d).padStart(2, '0')}`, blank(`${month}-${String(d).padStart(2, '0')}`))
+    for (const r of ((data as ReportRow[]) ?? [])) merged.set(r.work_date, r)
+    setRows([...merged.values()].sort((a, b) => (a.work_date < b.work_date ? -1 : 1)))
+  }, [me.id, month, blank])
   useEffect(() => { load() }, [load])
+
+  const moveMonth = (delta: number) => {
+    const [y, m] = month.split('-').map(Number)
+    setMonth(new Date(y, m - 1 + delta, 1).toLocaleDateString('sv-SE').slice(0, 7))
+  }
 
   const patch = (date: string, p: Partial<ReportRow>) =>
     setRows((rs) => rs.map((r) => (r.work_date === date ? { ...r, ...p } : r)))
@@ -743,54 +763,61 @@ function PlanRows({ me }: { me: Member }) {
     load()
   }
 
-  const addDate = () => {
-    if (!newDate || rows.some((r) => r.work_date === newDate)) return
-    setRows((rs) => [...rs, {
-      id: '', member_id: me.id, work_date: newDate, body: '', video: null,
-      submitted_at: '', plan: '・', planned_start: me.work_start?.slice(0, 5) ?? '', planned_end: me.work_end?.slice(0, 5) ?? '',
-    } as ReportRow].sort((a, b) => (a.work_date < b.work_date ? -1 : 1)))
-    setNewDate('')
+  // 時刻のゆるい入力を "HH:MM" に整形。"1100"→"11:00"、"9"→"09:00"、解釈不能なら空に
+  const normTime = (v: string) => {
+    const d = v.replace(/[^0-9]/g, '')
+    if (!d) return ''
+    const [h, m] = d.length <= 2 ? [+d, 0] : [+d.slice(0, -2), +d.slice(-2)]
+    if (h > 23 || m > 59) return ''
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
   }
-
-  // 箇条書き補助: 改行したら次の行に「・」を足す
-  const bulletize = (v: string, prev: string) =>
-    v.length > prev.length && v.endsWith('\n') ? v + '・' : v
 
   const fmtDate = (d: string) => {
     const dt = new Date(d + 'T00:00')
     return `${d.slice(5).replace('-', '/')}(${'日月火水木金土'[dt.getDay()]})`
   }
 
+  const [y, m] = month.split('-').map(Number)
   return (
     <div className="card">
-      <h2>稼働予定とやること <span className="tag">自分の管理用・何ヶ月先でも</span></h2>
-      {rows.length === 0 && <div className="empty">まだ予定がありません。下の日付から追加できます</div>}
-      {rows.map((r) => (
-        <div key={r.work_date} className="plan-row">
-          <div className="plan-row-head">
-            <b>{fmtDate(r.work_date)}</b>
-            <div className="draft-times">
-              <input type="time" aria-label={`${fmtDate(r.work_date)}の稼働予定開始`} value={r.planned_start ?? ''}
-                onChange={(e) => patch(r.work_date, { planned_start: e.target.value })} />
-              <span>–</span>
-              <input type="time" aria-label={`${fmtDate(r.work_date)}の稼働予定終了`} value={r.planned_end ?? ''}
-                onChange={(e) => patch(r.work_date, { planned_end: e.target.value })} />
-            </div>
-            <button className="btn-outline plan-save" onClick={() => save(r)}>
-              {savedAt === r.work_date ? '保存済み ✓' : '保存'}
-            </button>
-          </div>
-          <textarea aria-label={`${fmtDate(r.work_date)}のやること`} placeholder={'・やることを箇条書きで'}
-            value={r.plan ?? ''}
-            onChange={(e) => { patch(r.work_date, { plan: bulletize(e.target.value, r.plan ?? '') }); setSavedAt('') }} />
-        </div>
-      ))}
-      {err && <div className="notice warn">{err}</div>}
-      <div className="draft-times" style={{ marginTop: 14 }}>
-        <input type="date" aria-label="予定を追加する日付" min={today()} value={newDate}
-          onChange={(e) => setNewDate(e.target.value)} />
-        <button className="btn-primary" style={{ margin: 0 }} disabled={!newDate} onClick={addDate}>日付を追加</button>
+      <h2>
+        稼働予定表
+        <span className="month-nav">
+          <button aria-label="前の月" onClick={() => moveMonth(-1)}>◀</button>
+          <b>{y}年{m}月</b>
+          <button aria-label="次の月" onClick={() => moveMonth(1)}>▶</button>
+        </span>
+      </h2>
+      <div className="plan-table-wrap">
+          <table className="plan-table">
+            <thead>
+              <tr><th>日付</th><th>開始</th><th>終了</th><th>やること</th><th></th></tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.work_date} className={r.work_date === today() ? 'pt-today' : ''}>
+                  <td className="pt-date">{fmtDate(r.work_date)}</td>
+                  <td><input type="text" inputMode="numeric" placeholder="0900" className="pt-time"
+                    aria-label={`${fmtDate(r.work_date)}の稼働予定開始`} value={r.planned_start ?? ''}
+                    onChange={(e) => patch(r.work_date, { planned_start: e.target.value })}
+                    onBlur={(e) => patch(r.work_date, { planned_start: normTime(e.target.value) })} /></td>
+                  <td><input type="text" inputMode="numeric" placeholder="1800" className="pt-time"
+                    aria-label={`${fmtDate(r.work_date)}の稼働予定終了`} value={r.planned_end ?? ''}
+                    onChange={(e) => patch(r.work_date, { planned_end: e.target.value })}
+                    onBlur={(e) => patch(r.work_date, { planned_end: normTime(e.target.value) })} /></td>
+                  <td className="pt-plan"><textarea rows={1} placeholder="やることを自由に記入"
+                    aria-label={`${fmtDate(r.work_date)}のやること`} value={r.plan ?? ''}
+                    onChange={(e) => { patch(r.work_date, { plan: e.target.value }); setSavedAt('') }} /></td>
+                  <td><button className="btn-outline plan-save"
+                    onClick={() => save({ ...r, planned_start: normTime(r.planned_start ?? ''), planned_end: normTime(r.planned_end ?? '') })}>
+                    {savedAt === r.work_date ? '✓' : '保存'}
+                  </button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
       </div>
+      {err && <div className="notice warn">{err}</div>}
     </div>
   )
 }
@@ -801,16 +828,18 @@ function Report({ me }: { me: Member }) {
   const [plan, setTodayPlan] = useState<string | null>(null)
   const [history, setHistory] = useState<ReportRow[]>([])
   const [saved, setSaved] = useState(false)
+  const [showReports, setShowReports] = useState(false) // 日報の記入・過去分はボタンで開く
   const [err, setErr] = useState('')
   const myhood = useMyhood(me.company_id)
 
   const load = useCallback(async () => {
     const [{ data: reports }, { data: att }] = await Promise.all([
       supabase.from('daily_reports').select('*').eq('member_id', me.id)
-        .order('work_date', { ascending: false }).limit(7),
+        .order('work_date', { ascending: false }),
       supabase.from('attendances').select('plan').eq('member_id', me.id).eq('work_date', today()).maybeSingle(),
     ])
-    setHistory(reports ?? [])
+    // 予定だけの未来行（body空）は日報の履歴には出さない
+    setHistory((reports ?? []).filter((r) => r.body))
     setTodayPlan(att?.plan ?? null)
     const t = (reports ?? []).find((r) => r.work_date === today())
     if (t) { setBody(t.body === '動画で提出' ? '' : t.body); setSaved(true) }
@@ -845,6 +874,11 @@ function Report({ me }: { me: Member }) {
   return (
     <>
       <PlanRows me={me} />
+      {!showReports && (
+        <button className="btn-outline" style={{ margin: '0 auto', display: 'block' }}
+          onClick={() => setShowReports(true)}>日報を書く・過去の日報を見る</button>
+      )}
+      {showReports && (<>
       <div className="card">
         <h2>今日の日報 <span className="tag">{today().slice(5).replace('-', '/')}</span></h2>
         <label>今日の予定（出勤時に登録）</label>
@@ -888,6 +922,7 @@ function Report({ me }: { me: Member }) {
           </div>
         )}
       </div>
+      </>)}
     </>
   )
 }
@@ -1229,7 +1264,8 @@ const exportKintaiCsv = async (targets: Pick<Member, 'id' | 'name'>[], month: st
         t(bs[3]?.started_at), t(bs[3]?.ended_at),
         dur(gross), dur(bMin(bs[0])), dur(bMin(bs[1])), dur(bMin(bs[2])),
         dur(Math.max(0, gross - allBreaks)),
-        rep?.body ?? a?.plan ?? '',
+        // 業務内容: 日報の実績 > 日報タブの「やること」 > 出勤時の今日の予定
+        rep?.body || rep?.plan || a?.plan || '',
       ])
     }
   }
