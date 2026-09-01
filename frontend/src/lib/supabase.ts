@@ -90,6 +90,10 @@ export type Report = {
   body: string
   video: string | null // 動画提出のファイル名（あれば提出扱い）
   submitted_at: string
+  // 稼働予定（シフト的な予定）とやること。未来日はこの3つだけでbody空の行になる
+  plan: string | null
+  planned_start: string | null // "HH:MM"
+  planned_end: string | null
 }
 
 export const today = () => new Date().toLocaleDateString('sv-SE') // YYYY-MM-DD ローカル日付

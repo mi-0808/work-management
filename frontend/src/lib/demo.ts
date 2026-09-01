@@ -65,7 +65,15 @@ const daily_reports: Report[] = DEMO_MEMBERS.slice(0, 4).flatMap((m, mi) =>
     body: `${PLANS[(mi + i) % PLANS.length]}を完了。特に問題なし。`,
     video: null,
     submitted_at: at(dayOffset(-i), 18, 30),
+    plan: null, planned_start: null, planned_end: null,
   })))
+// 高橋（m1）の未来の稼働予定（日報タブ「稼働予定とやること」のデモ）
+daily_reports.push(
+  { id: uid(), member_id: 'm1', work_date: dayOffset(1), body: '', video: null,
+    submitted_at: at(today(), 9), plan: '・見積書の最終確認\n・新規案件のヒアリング準備', planned_start: '09:00', planned_end: '18:00' },
+  { id: uid(), member_id: 'm1', work_date: dayOffset(7), body: '', video: null,
+    submitted_at: at(today(), 9), plan: '・月次レポート作成', planned_start: '10:00', planned_end: '17:00' },
+)
 
 const ok = { status: 'confirmed', proposed_by: null, to_member_id: null } as const
 const schedules: Schedule[] = [

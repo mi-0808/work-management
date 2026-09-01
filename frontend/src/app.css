@@ -547,3 +547,13 @@ tr:last-child td { border-bottom: none; }
 .log-note:hover { color: var(--accent-strong); }
 .log-note-edit { margin: 4px 0 8px 64px; }
 .log-note-edit input[type="text"] { flex: 1; width: auto; }
+
+/* 日報タブ: 稼働予定とやること */
+.plan-row { border-bottom: 1px solid var(--line); padding: 12px 0; }
+.plan-row:last-of-type { border-bottom: none; }
+.plan-row-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.plan-row-head b { min-width: 84px; font-variant-numeric: tabular-nums; }
+.plan-row-head .draft-times { margin: 0; }
+.plan-row-head .draft-times input { width: 104px; }
+.plan-save { margin-left: auto; min-height: 36px; padding: 5px 14px; font-size: 12px; }
+.plan-row textarea { min-height: 60px; }

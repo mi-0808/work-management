@@ -714,6 +714,87 @@ function Home({ me }: { me: Member }) {
   )
 }
 
+/* ---------- 稼働予定とやること（日報タブ内・自己管理用） ---------- */
+function PlanRows({ me }: { me: Member }) {
+  const [rows, setRows] = useState<ReportRow[]>([])
+  const [newDate, setNewDate] = useState('')
+  const [err, setErr] = useState('')
+  const [savedAt, setSavedAt] = useState('') // 直近保存した行のwork_date（✓表示用）
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from('daily_reports').select('*').eq('member_id', me.id)
+      .gte('work_date', today()).order('work_date', { ascending: true })
+    setRows((data as ReportRow[]) ?? [])
+  }, [me.id])
+  useEffect(() => { load() }, [load])
+
+  const patch = (date: string, p: Partial<ReportRow>) =>
+    setRows((rs) => rs.map((r) => (r.work_date === date ? { ...r, ...p } : r)))
+
+  const save = async (r: ReportRow) => {
+    setErr('')
+    const { error } = await supabase.from('daily_reports').upsert(
+      { member_id: me.id, work_date: r.work_date, body: r.body ?? '',
+        plan: r.plan, planned_start: r.planned_start || null, planned_end: r.planned_end || null },
+      { onConflict: 'member_id,work_date' },
+    )
+    if (error) return setErr(`保存できませんでした（${error.message}）`)
+    setSavedAt(r.work_date)
+    load()
+  }
+
+  const addDate = () => {
+    if (!newDate || rows.some((r) => r.work_date === newDate)) return
+    setRows((rs) => [...rs, {
+      id: '', member_id: me.id, work_date: newDate, body: '', video: null,
+      submitted_at: '', plan: '・', planned_start: me.work_start?.slice(0, 5) ?? '', planned_end: me.work_end?.slice(0, 5) ?? '',
+    } as ReportRow].sort((a, b) => (a.work_date < b.work_date ? -1 : 1)))
+    setNewDate('')
+  }
+
+  // 箇条書き補助: 改行したら次の行に「・」を足す
+  const bulletize = (v: string, prev: string) =>
+    v.length > prev.length && v.endsWith('\n') ? v + '・' : v
+
+  const fmtDate = (d: string) => {
+    const dt = new Date(d + 'T00:00')
+    return `${d.slice(5).replace('-', '/')}(${'日月火水木金土'[dt.getDay()]})`
+  }
+
+  return (
+    <div className="card">
+      <h2>稼働予定とやること <span className="tag">自分の管理用・何ヶ月先でも</span></h2>
+      {rows.length === 0 && <div className="empty">まだ予定がありません。下の日付から追加できます</div>}
+      {rows.map((r) => (
+        <div key={r.work_date} className="plan-row">
+          <div className="plan-row-head">
+            <b>{fmtDate(r.work_date)}</b>
+            <div className="draft-times">
+              <input type="time" aria-label={`${fmtDate(r.work_date)}の稼働予定開始`} value={r.planned_start ?? ''}
+                onChange={(e) => patch(r.work_date, { planned_start: e.target.value })} />
+              <span>–</span>
+              <input type="time" aria-label={`${fmtDate(r.work_date)}の稼働予定終了`} value={r.planned_end ?? ''}
+                onChange={(e) => patch(r.work_date, { planned_end: e.target.value })} />
+            </div>
+            <button className="btn-outline plan-save" onClick={() => save(r)}>
+              {savedAt === r.work_date ? '保存済み ✓' : '保存'}
+            </button>
+          </div>
+          <textarea aria-label={`${fmtDate(r.work_date)}のやること`} placeholder={'・やることを箇条書きで'}
+            value={r.plan ?? ''}
+            onChange={(e) => { patch(r.work_date, { plan: bulletize(e.target.value, r.plan ?? '') }); setSavedAt('') }} />
+        </div>
+      ))}
+      {err && <div className="notice warn">{err}</div>}
+      <div className="draft-times" style={{ marginTop: 14 }}>
+        <input type="date" aria-label="予定を追加する日付" min={today()} value={newDate}
+          onChange={(e) => setNewDate(e.target.value)} />
+        <button className="btn-primary" style={{ margin: 0 }} disabled={!newDate} onClick={addDate}>日付を追加</button>
+      </div>
+    </div>
+  )
+}
+
 /* ---------- 日報 ---------- */
 function Report({ me }: { me: Member }) {
   const [body, setBody] = useState('')
@@ -763,6 +844,7 @@ function Report({ me }: { me: Member }) {
 
   return (
     <>
+      <PlanRows me={me} />
       <div className="card">
         <h2>今日の日報 <span className="tag">{today().slice(5).replace('-', '/')}</span></h2>
         <label>今日の予定（出勤時に登録）</label>
