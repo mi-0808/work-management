@@ -929,9 +929,9 @@ function Schedule({ me }: { me: Member }) {
             <input type="text" placeholder="またはタイトルを入力" value={title}
               onChange={(e) => setTitle(e.target.value)} />
             <div className="draft-times">
-              <input type="time" value={draft.start} onChange={(e) => setDraft({ ...draft, start: e.target.value })} />
+              <input type="time" aria-label="開始時刻" value={draft.start} onChange={(e) => setDraft({ ...draft, start: e.target.value })} />
               <span>–</span>
-              <input type="time" value={draft.end} onChange={(e) => setDraft({ ...draft, end: e.target.value })} />
+              <input type="time" aria-label="終了時刻" value={draft.end} onChange={(e) => setDraft({ ...draft, end: e.target.value })} />
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <input type="checkbox" checked={meet} onChange={(e) => setMeet(e.target.checked)} style={{ width: 'auto' }} />
@@ -1135,7 +1135,8 @@ function InvoiceView({ inv, memberName, onClose }: { inv: Invoice; memberName: s
 }
 
 /* ---------- 名簿 ---------- */
-const AVATAR_COLORS = ['#2563eb', '#0b2a6b', '#eab308', '#94a3b8', '#0891b2', '#7c3aed']
+// MyHood swatch palette（塗り専用。白文字が乗るので濃色寄りに調整）
+const AVATAR_COLORS = ['#007f66', '#2F8CFF', '#7c5cd6', '#0f8a7e', '#c2447e', '#c2691c']
 
 const BLANK_INVITE = { name: '', email: '', work_start: '09:00', work_end: '18:00' }
 
@@ -1252,6 +1253,7 @@ function Members({ me }: { me: Member }) {
               <div className="member-tags">
                 {isAdmin ? (
                   <select className={`role-select ${m.role === 'admin' ? 'is-admin' : ''}`} value={m.role}
+                    aria-label={`${m.name}の権限`}
                     onChange={(e) => changeRole(m, e.target.value as Member['role'])}>
                     <option value="member">一般</option>
                     <option value="admin">管理者</option>
@@ -1266,9 +1268,11 @@ function Members({ me }: { me: Member }) {
               <span className="m-hours-label">所定勤務</span>
               <div>
                 <input type="time" value={hm(m.work_start)} disabled={!isAdmin}
+                  aria-label={`${m.name}の所定勤務開始`}
                   onChange={(e) => changeHours(m, 'work_start', e.target.value)} />
                 <span> – </span>
                 <input type="time" value={hm(m.work_end)} disabled={!isAdmin}
+                  aria-label={`${m.name}の所定勤務終了`}
                   onChange={(e) => changeHours(m, 'work_end', e.target.value)} />
               </div>
               <span className="m-hours-label" style={{ marginTop: 6 }}>時給（0=給与制）</span>
@@ -1304,10 +1308,10 @@ function Members({ me }: { me: Member }) {
 
           <label>所定勤務時間帯</label>
           <div className="draft-times">
-            <input type="time" value={form.work_start}
+            <input type="time" aria-label="所定勤務開始" value={form.work_start}
               onChange={(e) => setForm({ ...form, work_start: e.target.value })} />
             <span>–</span>
-            <input type="time" value={form.work_end}
+            <input type="time" aria-label="所定勤務終了" value={form.work_end}
               onChange={(e) => setForm({ ...form, work_end: e.target.value })} />
           </div>
 
