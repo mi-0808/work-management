@@ -49,6 +49,17 @@ function useClock() {
   return now
 }
 
+// 動画をアップロードして公開URLを返す（本番はSupabase Storage、デモはblob URL）
+const uploadVideo = async (memberId: string, file: File) => {
+  const path = `${memberId}/${Date.now()}-${file.name}`
+  const { error } = await supabase.storage.from('videos').upload(path, file)
+  if (error) throw new Error(error.message)
+  return supabase.storage.from('videos').getPublicUrl(path).data.publicUrl
+}
+
+// URLとして再生できる値か（旧データはファイル名だけが入っている）
+const playable = (v: string | null): v is string => !!v && v.includes(':')
+
 // 会社のMyHood投稿先URL（管理者が名簿タブで設定。未設定ならnull）
 function useMyhood(companyId: string) {
   const [url, setUrl] = useState<string | null>(null)
@@ -448,12 +459,16 @@ function Home({ me }: { me: Member }) {
     load()
   }
 
-  // 動画を撮る（選ぶ）と予定を提出扱いに。動画本体はMyHoodへ投稿してもらう
-  // ponytail: ファイル名の記録のみ。MyHoodのAPI仕様が分かったら直接アップロードに置き換え
-  const planVideo = (file: File | undefined) => {
+  // 動画を撮る（選ぶ）とアップロードして予定を提出扱いに
+  // ponytail: MyHoodのAPIが使えるようになったら、ここからMyHoodにも同時投稿する
+  const planVideo = async (file: File | undefined) => {
     if (!file) return
-    save({ plan_video: file.name, plan: plan || '動画で提出' })
-    if (myhood) window.open(myhood, '_blank')
+    try {
+      const url = await uploadVideo(me.id, file)
+      save({ plan_video: url, plan: plan || '動画で提出' })
+    } catch (e) {
+      setErr(`動画をアップロードできませんでした（${(e as Error).message}）`)
+    }
   }
 
   return (
@@ -546,17 +561,16 @@ function Home({ me }: { me: Member }) {
         />
         <div className="form-actions">
           <button className="btn-primary" style={{ margin: 0 }} disabled={!plan} onClick={savePlan}>予定を保存</button>
-          <label className="btn-outline" style={{ cursor: 'pointer' }}>
-            🎥 動画で提出
-            <input type="file" accept="video/*" capture hidden
-              onChange={(e) => planVideo(e.target.files?.[0])} />
-          </label>
           {myhood && (
-            <a className="btn-outline" href={myhood} target="_blank" rel="noreferrer">MyHoodに投稿</a>
+            <label className="btn-outline" style={{ cursor: 'pointer' }}>
+              🎥 MyHood
+              <input type="file" accept="video/*" capture hidden
+                onChange={(e) => planVideo(e.target.files?.[0])} />
+            </label>
           )}
         </div>
-        {att?.plan_video && (
-          <div className="notice">動画（{att.plan_video}）で提出済みです。動画はMyHoodに投稿してください</div>
+        {playable(att?.plan_video ?? null) && (
+          <video className="report-video" src={att!.plan_video!} controls playsInline />
         )}
       </div>
 
@@ -615,10 +629,12 @@ function Report({ me }: { me: Member }) {
     setHistory(reports ?? [])
     setTodayPlan(att?.plan ?? null)
     const t = (reports ?? []).find((r) => r.work_date === today())
-    if (t) { setBody(t.body); setSaved(true) }
+    if (t) { setBody(t.body === '動画で提出' ? '' : t.body); setSaved(true) }
   }, [me.id])
 
   useEffect(() => { load() }, [load])
+
+  const todayRep = history.find((r) => r.work_date === today())
 
   const submit = async (video?: string) => {
     setErr('')
@@ -631,12 +647,15 @@ function Report({ me }: { me: Member }) {
     load()
   }
 
-  // 動画を撮る（選ぶ）と日報を提出扱いに。動画本体はMyHoodへ投稿してもらう
-  // ponytail: ファイル名の記録のみ。MyHoodのAPI仕様が分かったら直接アップロードに置き換え
-  const submitVideo = (file: File | undefined) => {
+  // 動画を撮る（選ぶ）とアップロードして日報を提出扱いに
+  // ponytail: MyHoodのAPIが使えるようになったら、ここからMyHoodにも同時投稿する
+  const submitVideo = async (file: File | undefined) => {
     if (!file) return
-    submit(file.name)
-    if (myhood) window.open(myhood, '_blank')
+    try {
+      submit(await uploadVideo(me.id, file))
+    } catch (e) {
+      setErr(`動画をアップロードできませんでした（${(e as Error).message}）`)
+    }
   }
 
   return (
@@ -655,16 +674,18 @@ function Report({ me }: { me: Member }) {
           <button className="btn-primary" style={{ margin: 0 }} disabled={!body || saved} onClick={() => submit()}>
             {saved ? '提出済み ✓' : '日報を提出'}
           </button>
-          <label className="btn-outline" style={{ cursor: 'pointer' }}>
-            🎥 動画で提出
-            <input type="file" accept="video/*" capture hidden
-              onChange={(e) => submitVideo(e.target.files?.[0])} />
-          </label>
           {myhood && (
-            <a className="btn-outline" href={myhood} target="_blank" rel="noreferrer">MyHoodに投稿</a>
+            <label className="btn-outline" style={{ cursor: 'pointer' }}>
+              🎥 MyHood
+              <input type="file" accept="video/*" capture hidden
+                onChange={(e) => submitVideo(e.target.files?.[0])} />
+            </label>
           )}
         </div>
-        {myhood && <div className="notice">動画で提出すると提出扱いになります。動画はMyHoodに投稿してください</div>}
+        {playable(todayRep?.video ?? null) && (
+          <video className="report-video" src={todayRep!.video!} controls playsInline />
+        )}
+        {myhood && <div className="notice">動画を撮って（選んで）アップロードすると、それだけで提出扱いになります</div>}
       </div>
 
       <div className="card">
@@ -675,6 +696,7 @@ function Report({ me }: { me: Member }) {
               <div key={r.id} className="list-item">
                 <div className="when">{r.work_date.slice(5).replace('-', '/')}</div>
                 <div className="title">{r.body}</div>
+                {playable(r.video) && <video className="report-video" src={r.video} controls playsInline />}
                 <span className="badge badge-blue">{r.video ? '動画提出' : '提出済'}</span>
               </div>
             ))}

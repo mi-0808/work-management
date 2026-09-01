@@ -158,10 +158,22 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
   }
 }
 
+// デモの動画アップロードはブラウザ内のblob URLで代用（リロードで消える）
+const blobUrls: Record<string, string> = {}
+
 // アプリが触るAPI面だけを持つ疑似クライアント
 export const demoClient = {
   from: (table: string) => new Query(table),
   rpc: async () => ({ data: null, error: null }),
+  storage: {
+    from: (_bucket: string) => ({
+      upload: async (path: string, file: File) => {
+        blobUrls[path] = URL.createObjectURL(file)
+        return { data: { path }, error: null }
+      },
+      getPublicUrl: (path: string) => ({ data: { publicUrl: blobUrls[path] ?? '' } }),
+    }),
+  },
   auth: {
     getSession: async () => ({ data: { session: null } }),
     onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),

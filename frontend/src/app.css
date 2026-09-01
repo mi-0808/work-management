@@ -365,6 +365,10 @@ tr:last-child td { border-bottom: none; }
   cursor: pointer; font-family: inherit; flex-shrink: 0;
 }
 .btn-outline:hover { background: #f8fafc; color: var(--ink); }
+.report-video {
+  display: block; max-width: 100%; width: 320px; margin-top: 10px;
+  border-radius: 12px; background: #000;
+}
 .account-mail { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .account-badges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .account-menu .btn-primary { width: 100%; }
