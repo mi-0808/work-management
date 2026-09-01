@@ -486,11 +486,17 @@ function Home({ me }: { me: Member }) {
       supabase.from('daily_reports').select('*').eq('member_id', me.id)
         .order('work_date', { ascending: false }).limit(7),
     ])
+    // 前日以前の退勤し忘れは、その日の24:00で自動退勤にする（auto_outで「自動補完」表示）
+    const stale = (data ?? []).find((a) => a.work_date < today() && a.clock_in && !a.clock_out)
+    if (stale) {
+      await supabase.from('attendances').update({
+        clock_out: new Date(stale.work_date + 'T23:59:59').toISOString(), auto_out: true,
+      }).eq('id', stale.id)
+      return load()
+    }
     setReports((reps as ReportRow[]) ?? [])
     setWeek(data ?? [])
-    // 今日の記録がなくても、前日以前の「未退勤」レコードがあれば引き継ぐ（日跨ぎ稼働・退勤し忘れ対応）
-    const t = (data ?? []).find((a) => a.work_date === today())
-      ?? (data ?? []).find((a) => a.clock_in && !a.clock_out) ?? null
+    const t = (data ?? []).find((a) => a.work_date === today()) ?? null
     setAtt(t)
     setPlan(((reps as ReportRow[]) ?? []).find((r) => r.work_date === today())?.plan ?? '')
   }, [me.id])
@@ -505,13 +511,10 @@ function Home({ me }: { me: Member }) {
   // 保存は必ず結果を確認する。黙って失敗すると打刻が消えたように見えるため
   const save = async (patch: Partial<Attendance>) => {
     setErr('')
-    // 前日から勤務が続いている場合は前日のレコードを更新する（日付跨ぎでも稼働は元の日に記録）
-    const { error } = att && att.work_date !== today()
-      ? await supabase.from('attendances').update(patch).eq('id', att.id)
-      : await supabase.from('attendances').upsert(
-          { member_id: me.id, work_date: today(), plan, ...patch },
-          { onConflict: 'member_id,work_date' },
-        )
+    const { error } = await supabase.from('attendances').upsert(
+      { member_id: me.id, work_date: today(), plan, ...patch },
+      { onConflict: 'member_id,work_date' },
+    )
     if (error) return setErr(`保存できませんでした（${error.message}）。ログインし直してもう一度お試しください`)
     setEditing(null)
     load()
