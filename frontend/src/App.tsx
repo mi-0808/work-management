@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isProviderEnabled, supabase, today } from './lib/supabase'
 import { DEMO, DEMO_MEMBERS } from './lib/demo'
@@ -748,10 +748,15 @@ function PlanRows({ me }: { me: Member }) {
     setMonth(new Date(y, m - 1 + delta, 1).toLocaleDateString('sv-SE').slice(0, 7))
   }
 
-  const patch = (date: string, p: Partial<ReportRow>) =>
+  const dirty = useRef(new Set<string>()) // セルを触った行だけblur時に自動保存する
+  const patch = (date: string, p: Partial<ReportRow>) => {
+    dirty.current.add(date)
     setRows((rs) => rs.map((r) => (r.work_date === date ? { ...r, ...p } : r)))
+  }
 
   const save = async (r: ReportRow) => {
+    if (!dirty.current.has(r.work_date)) return
+    dirty.current.delete(r.work_date)
     setErr('')
     const { error } = await supabase.from('daily_reports').upsert(
       { member_id: me.id, work_date: r.work_date, body: r.body ?? '',
@@ -760,7 +765,7 @@ function PlanRows({ me }: { me: Member }) {
     )
     if (error) return setErr(`保存できませんでした（${error.message}）`)
     setSavedAt(r.work_date)
-    load()
+    setTimeout(() => setSavedAt((s) => (s === r.work_date ? '' : s)), 1500)
   }
 
   // 時刻のゆるい入力を "HH:MM" に整形。"1100"→"11:00"、"9"→"09:00"、解釈不能なら空に
@@ -791,27 +796,33 @@ function PlanRows({ me }: { me: Member }) {
       <div className="plan-table-wrap">
           <table className="plan-table">
             <thead>
-              <tr><th>日付</th><th>開始</th><th>終了</th><th>やること</th><th></th></tr>
+              <tr><th>日付</th><th>開始</th><th>終了</th><th>やること</th></tr>
             </thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.work_date} className={r.work_date === today() ? 'pt-today' : ''}>
-                  <td className="pt-date">{fmtDate(r.work_date)}</td>
+                  <td className="pt-date">{fmtDate(r.work_date)}
+                    {savedAt === r.work_date && <span className="pt-saved" role="status">✓保存</span>}</td>
                   <td><input type="text" inputMode="numeric" placeholder="0900" className="pt-time"
                     aria-label={`${fmtDate(r.work_date)}の稼働予定開始`} value={r.planned_start ?? ''}
                     onChange={(e) => patch(r.work_date, { planned_start: e.target.value })}
-                    onBlur={(e) => patch(r.work_date, { planned_start: normTime(e.target.value) })} /></td>
+                    onBlur={(e) => {
+                      const v = normTime(e.target.value)
+                      if (v !== (r.planned_start ?? '')) patch(r.work_date, { planned_start: v })
+                      save({ ...r, planned_start: v })
+                    }} /></td>
                   <td><input type="text" inputMode="numeric" placeholder="1800" className="pt-time"
                     aria-label={`${fmtDate(r.work_date)}の稼働予定終了`} value={r.planned_end ?? ''}
                     onChange={(e) => patch(r.work_date, { planned_end: e.target.value })}
-                    onBlur={(e) => patch(r.work_date, { planned_end: normTime(e.target.value) })} /></td>
+                    onBlur={(e) => {
+                      const v = normTime(e.target.value)
+                      if (v !== (r.planned_end ?? '')) patch(r.work_date, { planned_end: v })
+                      save({ ...r, planned_end: v })
+                    }} /></td>
                   <td className="pt-plan"><textarea rows={1} placeholder="やることを自由に記入"
                     aria-label={`${fmtDate(r.work_date)}のやること`} value={r.plan ?? ''}
-                    onChange={(e) => { patch(r.work_date, { plan: e.target.value }); setSavedAt('') }} /></td>
-                  <td><button className="btn-outline plan-save"
-                    onClick={() => save({ ...r, planned_start: normTime(r.planned_start ?? ''), planned_end: normTime(r.planned_end ?? '') })}>
-                    {savedAt === r.work_date ? '✓' : '保存'}
-                  </button></td>
+                    onChange={(e) => patch(r.work_date, { plan: e.target.value })}
+                    onBlur={() => save(r)} /></td>
                 </tr>
               ))}
             </tbody>
