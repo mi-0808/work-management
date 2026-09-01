@@ -851,7 +851,8 @@ function PlanRows({ me }: { me: Member }) {
     setErr('')
     const { error } = await supabase.from('daily_reports').upsert(
       { member_id: me.id, work_date: r.work_date, body: r.body ?? '',
-        plan: r.plan, planned_start: r.planned_start || null, planned_end: r.planned_end || null },
+        plan: r.plan, planned_start: r.planned_start || null, planned_end: r.planned_end || null,
+        confirmed: r.confirmed ?? false },
       { onConflict: 'member_id,work_date' },
     )
     if (error) return setErr(`保存できませんでした（${error.message}）`)
@@ -895,13 +896,20 @@ function PlanRows({ me }: { me: Member }) {
                 return (
                 <tr key={r.work_date} className={r.work_date === today() ? 'pt-today' : ''}>
                   <td className="pt-date">{fmtDate(r.work_date)}
-                    {a?.clock_out && <span className="pt-fixed">確定</span>}
+                    {a?.clock_out && (
+                      // 確定は自動ではなく本人がボタンで固定する。押すまではいつでも編集可
+                      <button className={`pt-fix-btn ${r.confirmed ? 'on' : ''}`}
+                        aria-pressed={r.confirmed ?? false}
+                        onClick={() => { dirty.current.add(r.work_date); const nr = { ...r, confirmed: !r.confirmed }; patch(r.work_date, { confirmed: nr.confirmed }); save(nr) }}>
+                        {r.confirmed ? '確定済' : '確定'}
+                      </button>
+                    )}
                     {savedAt === r.work_date && <span className="pt-saved" role="status">✓保存</span>}</td>
-                  {a?.clock_out ? (
+                  {r.confirmed ? (
                     // 稼働が終わった日は予定ではなく実際の打刻時刻で確定表示（編集はホームの打刻修正から）
                     <>
-                      <td className="pt-time pt-done">{fmtTime(a.clock_in)}</td>
-                      <td className="pt-time pt-done">{fmtTime(a.clock_out)}</td>
+                      <td className="pt-time pt-done">{a?.clock_in ? fmtTime(a.clock_in) : (r.planned_start ?? '')}</td>
+                      <td className="pt-time pt-done">{a?.clock_out ? fmtTime(a.clock_out) : (r.planned_end ?? '')}</td>
                     </>
                   ) : (
                     <>

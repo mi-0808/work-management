@@ -94,6 +94,8 @@ export type Report = {
   plan: string | null
   planned_start: string | null // "HH:MM"
   planned_end: string | null
+  confirmed: boolean // 本人が「確定」ボタンで固定した日。ponytail: 権限制御（管理者のみ解除等）はdocs/backlog.md
+
 }
 
 export const today = () => new Date().toLocaleDateString('sv-SE') // YYYY-MM-DD ローカル日付
