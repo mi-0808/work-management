@@ -59,7 +59,11 @@ for (const [mi, m] of DEMO_MEMBERS.slice(0, 3).entries()) {
   if (mi === 2) breaks.push({ id: uid(), attendance_id: a.id, started_at: new Date(Date.now() - 20 * 60000).toISOString(), ended_at: null, note: null })
 }
 
-// 鈴木は前日出勤したまま退勤し忘れ（日跨ぎ稼働のデモ）
+// 鈴木は前日出勤したまま退勤し忘れ（自動退勤のデモ）。通常シードと重複しないよう前日分は差し替え
+{
+  const i = attendances.findIndex((a) => a.member_id === 'm4' && a.work_date === dayOffset(-1))
+  if (i >= 0) attendances.splice(i, 1)
+}
 attendances.push({
   id: uid(), member_id: 'm4', work_date: dayOffset(-1),
   clock_in: at(dayOffset(-1), 18, 0), clock_out: null,

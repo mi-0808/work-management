@@ -882,6 +882,48 @@ function PlanRows({ me }: { me: Member }) {
     return `${d.slice(5).replace('-', '/')}(${'日月火水木金土'[dt.getDay()]})`
   }
 
+  // ---- 過去日の実績（打刻）を直接編集する ----
+  const toIso = (date: string, hmStr: string) => new Date(`${date}T${hmStr}:00`).toISOString()
+  const flash = (date: string) => {
+    setSavedAt(date)
+    setTimeout(() => setSavedAt((s) => (s === date ? '' : s)), 1500)
+  }
+  // 開始/終了の修正。手で直したら自動補完フラグは下ろす
+  const saveActual = async (date: string, field: 'clock_in' | 'clock_out', v: string) => {
+    if (!v) return load() // 空は無視して表示を戻す
+    setErr('')
+    const { error } = await supabase.from('attendances').upsert(
+      { member_id: me.id, work_date: date, [field]: toIso(date, v),
+        [field === 'clock_in' ? 'auto_in' : 'auto_out']: false },
+      { onConflict: 'member_id,work_date' },
+    )
+    if (error) return setErr(`実績を保存できませんでした（${error.message}）`)
+    flash(date)
+    load()
+  }
+  const fmtBreaks = (a?: Attendance) =>
+    [...(a?.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
+      .map((b) => `${fmtTime(b.started_at)}–${b.ended_at ? fmtTime(b.ended_at) : ''}`).join(', ')
+  // 「1200-1300, 1500-1515」形式をパースしてその日のbreaksを入れ替える
+  const saveBreaks = async (a: Attendance, text: string) => {
+    setErr('')
+    const parts = text.split(/[,、]/).map((s) => s.trim()).filter(Boolean)
+    const ranges: [string, string][] = []
+    for (const p of parts) {
+      const [s, e] = p.split(/[-–~〜]/).map((t) => normTime(t ?? ''))
+      if (!s || !e) return setErr(`中抜けは「1200-1300」の形式で入力してください（${p} が読めませんでした）`)
+      ranges.push([s, e])
+    }
+    await supabase.from('breaks').delete().eq('attendance_id', a.id)
+    for (const [s, e] of ranges) {
+      const { error } = await supabase.from('breaks').insert(
+        { attendance_id: a.id, started_at: toIso(a.work_date, s), ended_at: toIso(a.work_date, e) })
+      if (error) return setErr(`中抜けを保存できませんでした（${error.message}）`)
+    }
+    flash(a.work_date)
+    load()
+  }
+
   const [y, m] = month.split('-').map(Number)
   return (
     <div className="card">
@@ -896,11 +938,12 @@ function PlanRows({ me }: { me: Member }) {
       <div className="plan-table-wrap">
           <table className="plan-table">
             <thead>
-              <tr><th>日付</th><th>開始</th><th>終了</th><th>やること</th></tr>
+              <tr><th>日付</th><th>開始</th><th>終了</th><th>中抜け</th><th>やること</th></tr>
             </thead>
             <tbody>
               {rows.map((r) => {
                 const a = atts.find((x) => x.work_date === r.work_date)
+                const isPast = r.work_date < today()
                 return (
                 <tr key={r.work_date} className={r.work_date === today() ? 'pt-today' : ''}>
                   <td className="pt-date">{fmtDate(r.work_date)}
@@ -918,6 +961,34 @@ function PlanRows({ me }: { me: Member }) {
                     <>
                       <td className="pt-time pt-done">{a?.clock_in ? fmtTime(a.clock_in) : (r.planned_start ?? '')}</td>
                       <td className="pt-time pt-done">{a?.clock_out ? fmtTime(a.clock_out) : (r.planned_end ?? '')}</td>
+                      <td className="pt-time pt-done">{fmtBreaks(a)}</td>
+                    </>
+                  ) : isPast ? (
+                    // 過去日は予定ではなく実績（打刻）を直接編集する
+                    <>
+                      <td><input type="text" inputMode="numeric" className="pt-time" placeholder="0900"
+                        key={`in-${r.work_date}-${a?.clock_in ?? ''}`}
+                        aria-label={`${fmtDate(r.work_date)}の実績開始`}
+                        defaultValue={a?.clock_in ? fmtTime(a.clock_in) : ''}
+                        onBlur={(e) => {
+                          const v = normTime(e.target.value)
+                          if (v !== (a?.clock_in ? fmtTime(a.clock_in) : '')) saveActual(r.work_date, 'clock_in', v)
+                        }} /></td>
+                      <td><input type="text" inputMode="numeric" className="pt-time" placeholder="1800"
+                        key={`out-${r.work_date}-${a?.clock_out ?? ''}`}
+                        aria-label={`${fmtDate(r.work_date)}の実績終了`}
+                        defaultValue={a?.clock_out ? fmtTime(a.clock_out) : ''}
+                        onBlur={(e) => {
+                          const v = normTime(e.target.value)
+                          if (v !== (a?.clock_out ? fmtTime(a.clock_out) : '')) saveActual(r.work_date, 'clock_out', v)
+                        }} /></td>
+                      <td className="pt-breaks"><input type="text" inputMode="numeric" placeholder="1200-1300"
+                        key={`br-${r.work_date}-${fmtBreaks(a)}`} disabled={!a}
+                        aria-label={`${fmtDate(r.work_date)}の中抜け（1200-1300形式）`}
+                        defaultValue={fmtBreaks(a)}
+                        onBlur={(e) => {
+                          if (a && e.target.value.trim() !== fmtBreaks(a)) saveBreaks(a, e.target.value)
+                        }} /></td>
                     </>
                   ) : (
                     <>
@@ -938,6 +1009,7 @@ function PlanRows({ me }: { me: Member }) {
                           if (v !== (r.planned_end ?? '')) patch(r.work_date, { planned_end: v })
                           save({ ...r, planned_end: v })
                         }} /></td>
+                      <td className="pt-breaks pt-breaks-ro">{fmtBreaks(a)}</td>
                     </>
                   )}
                   <td className="pt-plan"><textarea rows={1} placeholder="やることを自由に記入"
