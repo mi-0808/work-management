@@ -355,6 +355,38 @@ function Onboarding({ email, onDone }: { email: string; onDone: () => void }) {
   )
 }
 
+/* ---------- 今日のミーティング（予定タブのカレンダーから当日の確定分だけ） ---------- */
+function TodayMeetings({ me }: { me: Member }) {
+  const [events, setEvents] = useState<ScheduleRow[]>([])
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from('schedules').select('*')
+        .eq('company_id', me.company_id).eq('status', 'confirmed')
+      const t = today()
+      setEvents(((data as ScheduleRow[]) ?? [])
+        .filter((e) => new Date(e.starts_at).toLocaleDateString('sv-SE') === t)
+        .sort((a, b) => (a.starts_at < b.starts_at ? -1 : 1)))
+    })()
+  }, [me.company_id])
+  const hm2 = (iso: string) => new Date(iso).toTimeString().slice(0, 5)
+  return (
+    <div className="card">
+      <h2>今日のミーティング</h2>
+      {events.length === 0 ? <div className="empty">今日の予定はありません</div> : (
+        <div className="list">
+          {events.map((e) => (
+            <div key={e.id} className="list-item">
+              <div className="when">{hm2(e.starts_at)}–{hm2(e.ends_at)}</div>
+              <div className="title">{e.title}</div>
+              {e.with_meet && <span className="badge badge-blue">Meet</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ---------- 出勤・退勤 ---------- */
 function Home({ me }: { me: Member }) {
   const now = useClock()
@@ -499,17 +531,6 @@ function Home({ me }: { me: Member }) {
   // 退勤後にまた稼働する場合。退勤時刻を消して勤務中に戻す
   const resume = () => save({ clock_out: null })
 
-  // 今日のやること: 稼働予定表（daily_reports.plan）と同じデータを読み書きして同期する
-  const saveTodayPlan = async () => {
-    setErr('')
-    const { error } = await supabase.from('daily_reports').upsert(
-      { member_id: me.id, work_date: today(), plan },
-      { onConflict: 'member_id,work_date' },
-    )
-    if (error) return setErr(`保存できませんでした（${error.message}）`)
-    load()
-  }
-
   // 中抜け（ランチ・私用など）。1日に何回でも
   const startBreak = async () => {
     if (!att) return
@@ -536,10 +557,23 @@ function Home({ me }: { me: Member }) {
           {now.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}
           {' · '}<b>{status}</b>
         </div>
-        <div className="clock">
-          {now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
-          <span className="sec">:{String(now.getSeconds()).padStart(2, '0')}</span>
-        </div>
+        {att?.clock_in ? (
+          // 出勤後は現在時刻ではなく実働時間を主役に（休憩・中抜けは除いてリアルタイムに進む）
+          (() => {
+            const sec = Math.max(0, Math.floor(workedMinutes(att, now.getTime()) * 60))
+            return (
+              <div className="clock">
+                {Math.floor(sec / 3600)}:{String(Math.floor((sec % 3600) / 60)).padStart(2, '0')}
+                <span className="sec">:{String(sec % 60).padStart(2, '0')} 実働</span>
+              </div>
+            )
+          })()
+        ) : (
+          <div className="clock">
+            {now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+            <span className="sec">:{String(now.getSeconds()).padStart(2, '0')}</span>
+          </div>
+        )}
         {err && <div className="notice warn">{err}</div>}
         <div className="punch-row">
           {editing === 'in' ? (
@@ -644,16 +678,8 @@ function Home({ me }: { me: Member }) {
         )}
       </div>
 
-      <div className="card">
-        <h2>今日のやること <span className="tag">稼働予定表と同期</span></h2>
-        <textarea
-          aria-label="今日のやること"
-          placeholder="今日やることを入力（稼働予定表にもそのまま反映されます）"
-          value={plan}
-          onChange={(e) => setPlan(e.target.value)}
-          onBlur={saveTodayPlan}
-        />
-      </div>
+      <TodayMeetings me={me} />
+      <PlanRows me={me} />
 
       <div className="card">
         <h2>最近の勤怠</h2>
