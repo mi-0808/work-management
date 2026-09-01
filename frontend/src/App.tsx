@@ -459,6 +459,24 @@ function WeekPlan({ me }: { me: Member }) {
   )
 }
 
+/* ---------- 今日のミーティング⇄今週の予定の切り替え表示 ---------- */
+function MeetingsWeek({ me }: { me: Member }) {
+  const [view, setView] = useState<'today' | 'week'>('today')
+  return (
+    <>
+      <div className="seg-row" role="tablist" aria-label="予定の切り替え">
+        <button role="tab" aria-selected={view === 'today'}
+          className={`preset-chip ${view === 'today' ? 'sel' : ''}`}
+          onClick={() => setView('today')}>今日</button>
+        <button role="tab" aria-selected={view === 'week'}
+          className={`preset-chip ${view === 'week' ? 'sel' : ''}`}
+          onClick={() => setView('week')}>今週</button>
+      </div>
+      {view === 'today' ? <TodayMeetings me={me} /> : <WeekPlan me={me} />}
+    </>
+  )
+}
+
 /* ---------- 出勤・退勤 ---------- */
 function Home({ me }: { me: Member }) {
   const now = useClock()
@@ -740,8 +758,7 @@ function Home({ me }: { me: Member }) {
         )}
       </div>
 
-      <TodayMeetings me={me} />
-      <WeekPlan me={me} />
+      <MeetingsWeek me={me} />
       <PlanKintai me={me} />
     </>
   )
