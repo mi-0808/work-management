@@ -1,5 +1,5 @@
 // /demo 用のインメモリSupabaseモック。リロードで初期化される
-import type { Attendance, Break, Member, Report, Schedule } from './supabase'
+import type { Attendance, Break, Invoice, Member, Report, Schedule } from './supabase'
 
 export const DEMO = location.pathname.startsWith('/demo')
 
@@ -18,11 +18,11 @@ const at = (date: string, h: number, m = 0) => {
 const COMPANY = { id: 'c1', name: 'ひまわり事務機', icon: '🌻', join_code: 'DEMO01', myhood_url: 'https://myhood.example.com/himawari' }
 
 export const DEMO_MEMBERS: Member[] = [
-  { id: 'm1', company_id: 'c1', user_id: 'u1', name: '高橋 誠', email: 'takahashi@example.com', member_type: 'internal', role: 'admin', status: 'active', work_start: '09:00:00', work_end: '18:00:00' },
-  { id: 'm2', company_id: 'c1', user_id: 'u2', name: '佐藤 美咲', email: 'sato@example.com', member_type: 'internal', role: 'member', status: 'active', work_start: '09:00:00', work_end: '18:00:00' },
-  { id: 'm3', company_id: 'c1', user_id: 'u3', name: '田中 健太', email: 'tanaka@example.com', member_type: 'internal', role: 'member', status: 'active', work_start: '10:00:00', work_end: '19:00:00' },
-  { id: 'm4', company_id: 'c1', user_id: 'u4', name: '鈴木 花子', email: 'suzuki@example.com', member_type: 'external', role: 'member', status: 'active', work_start: '09:30:00', work_end: '16:30:00' },
-  { id: 'm5', company_id: 'c1', user_id: null, name: '山本 大輔', email: 'yamamoto@example.com', member_type: 'internal', role: 'member', status: 'invited', work_start: '09:00:00', work_end: '18:00:00' },
+  { id: 'm1', company_id: 'c1', user_id: 'u1', name: '高橋 誠', email: 'takahashi@example.com', member_type: 'internal', role: 'admin', status: 'active', work_start: '09:00:00', work_end: '18:00:00', hourly_rate: 0 },
+  { id: 'm2', company_id: 'c1', user_id: 'u2', name: '佐藤 美咲', email: 'sato@example.com', member_type: 'internal', role: 'member', status: 'active', work_start: '09:00:00', work_end: '18:00:00', hourly_rate: 1200 },
+  { id: 'm3', company_id: 'c1', user_id: 'u3', name: '田中 健太', email: 'tanaka@example.com', member_type: 'internal', role: 'member', status: 'active', work_start: '10:00:00', work_end: '19:00:00', hourly_rate: 1100 },
+  { id: 'm4', company_id: 'c1', user_id: 'u4', name: '鈴木 花子', email: 'suzuki@example.com', member_type: 'external', role: 'member', status: 'active', work_start: '09:30:00', work_end: '16:30:00', hourly_rate: 1300 },
+  { id: 'm5', company_id: 'c1', user_id: null, name: '山本 大輔', email: 'yamamoto@example.com', member_type: 'internal', role: 'member', status: 'invited', work_start: '09:00:00', work_end: '18:00:00', hourly_rate: 1000 },
 ]
 
 let seq = 0
@@ -77,6 +77,14 @@ const schedules: Schedule[] = [
   { id: uid(), company_id: 'c1', member_id: 'm2', title: '打ち合わせ', starts_at: at(today(), 15), ends_at: at(today(), 16), kind: 'event', with_meet: true, status: 'proposed', proposed_by: 'm2', to_member_id: 'm1' },
 ]
 
+// 鈴木の先月分（支払済み）をシード
+const lastMonth = (() => { const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toLocaleDateString('sv-SE').slice(0, 7) })()
+const invoices: Invoice[] = [
+  { id: uid(), member_id: 'm4', month: lastMonth, minutes: 3840, hourly_rate: 1300,
+    expenses: [{ label: '交通費', amount: 2140 }], status: 'paid',
+    issued_at: at(today(), 9), paid_at: at(today(), 10) },
+]
+
 const tables: Record<string, Record<string, unknown>[]> = {
   companies: [COMPANY],
   members: DEMO_MEMBERS as unknown as Record<string, unknown>[],
@@ -84,6 +92,7 @@ const tables: Record<string, Record<string, unknown>[]> = {
   breaks: breaks as unknown as Record<string, unknown>[],
   daily_reports: daily_reports as unknown as Record<string, unknown>[],
   schedules: schedules as unknown as Record<string, unknown>[],
+  invoices: invoices as unknown as Record<string, unknown>[],
 }
 
 type Row = Record<string, unknown>

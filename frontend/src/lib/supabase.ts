@@ -33,6 +33,19 @@ export type Member = {
   status: 'invited' | 'active' | 'disabled'
   work_start: string // "HH:MM:SS"
   work_end: string
+  hourly_rate: number // 時給（円）。0は給与制＝請求書フロー対象外
+}
+
+export type Invoice = {
+  id: string
+  member_id: string
+  month: string // "YYYY-MM"
+  minutes: number // 発行時の実働合計スナップショット
+  hourly_rate: number
+  expenses: { label: string; amount: number }[]
+  status: 'issued' | 'paid'
+  issued_at: string
+  paid_at: string | null
 }
 
 export type Attendance = {

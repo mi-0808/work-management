@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isProviderEnabled, supabase, today } from './lib/supabase'
 import { DEMO, DEMO_MEMBERS } from './lib/demo'
-import type { Attendance, Break, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
+import type { Attendance, Break, Invoice, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
 
 type Tab = 'home' | 'report' | 'schedule' | 'members' | 'profile'
 
@@ -1007,6 +1007,133 @@ function Schedule({ me }: { me: Member }) {
   )
 }
 
+/* ---------- 稼働表CSV・請求書（名簿タブとプロフィールで共用） ---------- */
+const yen = (n: number) => `¥${Math.round(n).toLocaleString('ja-JP')}`
+const hmm = (min: number) => `${Math.floor(min / 60)}:${String(Math.round(min % 60)).padStart(2, '0')}`
+const monthRange = (month: string) => {
+  const [y, mo] = month.split('-').map(Number)
+  return { from: `${month}-01`, to: new Date(y, mo, 1).toLocaleDateString('sv-SE'), y, mo }
+}
+
+// その月の実働合計（分）。休憩を引いた workedMinutes を日ごとに合算
+const monthWorkedMinutes = async (memberId: string, month: string) => {
+  const { from, to } = monthRange(month)
+  const { data } = await supabase.from('attendances').select('*, breaks(*)')
+    .eq('member_id', memberId).gte('work_date', from).lt('work_date', to)
+  return ((data as Attendance[]) ?? []).reduce((sum, a) => sum + workedMinutes(a), 0)
+}
+
+// 出勤簿CSV（現行スプレッドシートの列構成に合わせる。最初の中抜け＝ランチ扱い）
+const exportKintaiCsv = async (targets: Pick<Member, 'id' | 'name'>[], month: string) => {
+  const { from, to, y, mo } = monthRange(month)
+  const atts: Attendance[] = []
+  const reps: ReportRow[] = []
+  // ponytail: メンバーごとに直列fetch。人数が増えて遅くなったらin()で一括に
+  for (const m of targets) {
+    const [{ data: a }, { data: r }] = await Promise.all([
+      supabase.from('attendances').select('*, breaks(*)').eq('member_id', m.id)
+        .gte('work_date', from).lt('work_date', to),
+      supabase.from('daily_reports').select('*').eq('member_id', m.id)
+        .gte('work_date', from).lt('work_date', to),
+    ])
+    atts.push(...((a as Attendance[]) ?? []))
+    reps.push(...((r as ReportRow[]) ?? []))
+  }
+  const t = (iso?: string | null) => (iso ? new Date(iso).toTimeString().slice(0, 5) : '')
+  const dur = (min: number) => (min > 0 ? hmm(min) : '')
+  const bMin = (b?: Break) =>
+    b?.ended_at ? (new Date(b.ended_at).getTime() - new Date(b.started_at).getTime()) / 60000 : 0
+  const rows = [[
+    '氏名', '日付', '曜日', '出勤', 'ランチ入り', 'ランチ戻り', '退勤',
+    '中抜け開始1', '中抜け戻り1', '中抜け開始2', '中抜け戻り2', '中抜け開始3', '中抜け戻り3',
+    '総時間', '休憩', '中抜け1', '中抜け2', '実労働時間', '業務内容',
+  ]]
+  const days = new Date(y, mo, 0).getDate()
+  for (const m of targets) {
+    for (let d = 1; d <= days; d++) {
+      const date = `${month}-${String(d).padStart(2, '0')}`
+      const dow = '日月火水木金土'[new Date(y, mo - 1, d).getDay()]
+      const a = atts.find((x) => x.member_id === m.id && x.work_date === date)
+      const bs = [...(a?.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
+      const gross = a?.clock_in && a?.clock_out
+        ? (new Date(a.clock_out).getTime() - new Date(a.clock_in).getTime()) / 60000 : 0
+      const allBreaks = bs.reduce((s, b) => s + bMin(b), 0)
+      const rep = reps.find((r) => r.member_id === m.id && r.work_date === date)
+      rows.push([
+        m.name, date, dow,
+        t(a?.clock_in), t(bs[0]?.started_at), t(bs[0]?.ended_at), t(a?.clock_out),
+        t(bs[1]?.started_at), t(bs[1]?.ended_at), t(bs[2]?.started_at), t(bs[2]?.ended_at),
+        t(bs[3]?.started_at), t(bs[3]?.ended_at),
+        dur(gross), dur(bMin(bs[0])), dur(bMin(bs[1])), dur(bMin(bs[2])),
+        dur(Math.max(0, gross - allBreaks)),
+        rep?.body ?? a?.plan ?? '',
+      ])
+    }
+  }
+  const csv = '\uFEFF' + rows
+    .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+    .join('\r\n')
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+  const el = document.createElement('a')
+  el.href = url
+  el.download = `出勤簿_${month}.csv`
+  el.click()
+  URL.revokeObjectURL(url)
+}
+
+const invoiceTotal = (inv: Invoice) =>
+  Math.round((inv.minutes / 60) * inv.hourly_rate) +
+  inv.expenses.reduce((s, e) => s + e.amount, 0)
+
+// 印刷用の請求書ビュー（本人・管理者の両方から使う）
+function InvoiceView({ inv, memberName, onClose }: { inv: Invoice; memberName: string; onClose: () => void }) {
+  const [companyName, setCompanyName] = useState('')
+  useEffect(() => {
+    supabase.from('companies').select('name').limit(1).maybeSingle()
+      .then(({ data }) => setCompanyName((data as { name?: string } | null)?.name ?? ''))
+  }, [])
+  const labor = Math.round((inv.minutes / 60) * inv.hourly_rate)
+  return (
+    <div className="invoice-page">
+      <div className="form-actions no-print" style={{ marginTop: 0 }}>
+        <button className="btn-outline" onClick={onClose}>← 戻る</button>
+        <button className="btn-primary" style={{ margin: 0 }} onClick={() => window.print()}>印刷 / PDF保存</button>
+      </div>
+      <div className="invoice">
+        <h1>請求書</h1>
+        <div className="invoice-head">
+          <div>
+            <div className="invoice-to">{companyName} 御中</div>
+            <div className="invoice-meta">対象期間: {inv.month.replace('-', '年')}月分</div>
+            <div className="invoice-meta">発行日: {new Date(inv.issued_at).toLocaleDateString('ja-JP')}</div>
+          </div>
+          <div className="invoice-from">
+            <div>{memberName}</div>
+            {inv.status === 'paid' && <span className="badge badge-blue">支払済み</span>}
+          </div>
+        </div>
+        <table className="invoice-table">
+          <thead>
+            <tr><th>項目</th><th>数量</th><th>単価</th><th>金額</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>業務委託料（実働 {hmm(inv.minutes)}）</td>
+              <td>{(inv.minutes / 60).toFixed(2)} h</td>
+              <td>{yen(inv.hourly_rate)}</td>
+              <td>{yen(labor)}</td>
+            </tr>
+            {inv.expenses.map((e, i) => (
+              <tr key={i}><td>{e.label}（経費）</td><td>—</td><td>—</td><td>{yen(e.amount)}</td></tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="invoice-total">合計 {yen(invoiceTotal(inv))}</div>
+      </div>
+    </div>
+  )
+}
+
 /* ---------- 名簿 ---------- */
 const AVATAR_COLORS = ['#2563eb', '#0b2a6b', '#eab308', '#94a3b8', '#0891b2', '#7c3aed']
 
@@ -1023,16 +1150,21 @@ function Members({ me }: { me: Member }) {
   const [myhood, setMyhood] = useState('')
   const [myhoodMsg, setMyhoodMsg] = useState('')
   const [month, setMonth] = useState(today().slice(0, 7)) // "YYYY-MM"
+  const [invs, setInvs] = useState<Invoice[]>([])
+  const [invView, setInvView] = useState<Invoice | null>(null)
   const isAdmin = me.role === 'admin'
 
   const load = useCallback(async () => {
-    const [{ data: rows }, { data: company }] = await Promise.all([
+    const [{ data: rows }, { data: company }, { data: invRows }] = await Promise.all([
       supabase.from('members').select('*').eq('company_id', me.company_id).order('created_at'),
       supabase.from('companies').select('join_code, myhood_url').eq('id', me.company_id).maybeSingle(),
+      supabase.from('invoices').select('*').order('issued_at', { ascending: false }),
     ])
     setMembers(rows ?? [])
     setCode(company?.join_code ?? '')
     setMyhood((company as { myhood_url?: string | null } | null)?.myhood_url ?? '')
+    const ids = new Set(((rows as Member[]) ?? []).map((m) => m.id))
+    setInvs(((invRows as Invoice[]) ?? []).filter((v) => ids.has(v.member_id)))
   }, [me.company_id])
 
   useEffect(() => { load() }, [load])
@@ -1049,6 +1181,21 @@ function Members({ me }: { me: Member }) {
     if (error) setErr('所定時間を変更できませんでした')
   }
 
+  const changeRate = async (m: Member, value: string) => {
+    const rate = Math.max(0, Number(value) || 0)
+    setMembers(members.map((x) => (x.id === m.id ? { ...x, hourly_rate: rate } : x)))
+    const { error } = await supabase.from('members').update({ hourly_rate: rate }).eq('id', m.id)
+    if (error) setErr('時給を変更できませんでした')
+  }
+
+  const markPaid = async (inv: Invoice) => {
+    setErr('')
+    const { error } = await supabase.from('invoices')
+      .update({ status: 'paid', paid_at: new Date().toISOString() }).eq('id', inv.id)
+    if (error) return setErr(`更新できませんでした（${error.message}）`)
+    load()
+  }
+
   const changeRole = async (m: Member, role: Member['role']) => {
     setErr('')
     const { error } = await supabase.from('members').update({ role }).eq('id', m.id)
@@ -1063,67 +1210,6 @@ function Members({ me }: { me: Member }) {
     setMyhoodMsg(error ? '保存できませんでした（管理者のみ変更可能です）' : '保存しました')
   }
 
-  // 出勤簿CSV（現行スプレッドシートの列構成に合わせる。最初の中抜け＝ランチ扱い）
-  const exportCsv = async () => {
-    const [y, mo] = month.split('-').map(Number)
-    const from = `${month}-01`
-    const to = new Date(y, mo, 1).toLocaleDateString('sv-SE')
-    const atts: Attendance[] = []
-    const reps: ReportRow[] = []
-    // ponytail: メンバーごとに直列fetch。人数が増えて遅くなったらin()で一括に
-    for (const m of members) {
-      const [{ data: a }, { data: r }] = await Promise.all([
-        supabase.from('attendances').select('*, breaks(*)').eq('member_id', m.id)
-          .gte('work_date', from).lt('work_date', to),
-        supabase.from('daily_reports').select('*').eq('member_id', m.id)
-          .gte('work_date', from).lt('work_date', to),
-      ])
-      atts.push(...((a as Attendance[]) ?? []))
-      reps.push(...((r as ReportRow[]) ?? []))
-    }
-    const t = (iso?: string | null) => (iso ? new Date(iso).toTimeString().slice(0, 5) : '')
-    const dur = (min: number) =>
-      min > 0 ? `${Math.floor(min / 60)}:${String(Math.round(min % 60)).padStart(2, '0')}` : ''
-    const bMin = (b?: Break) =>
-      b?.ended_at ? (new Date(b.ended_at).getTime() - new Date(b.started_at).getTime()) / 60000 : 0
-    const rows = [[
-      '氏名', '日付', '曜日', '出勤', 'ランチ入り', 'ランチ戻り', '退勤',
-      '中抜け開始1', '中抜け戻り1', '中抜け開始2', '中抜け戻り2', '中抜け開始3', '中抜け戻り3',
-      '総時間', '休憩', '中抜け1', '中抜け2', '実労働時間', '業務内容',
-    ]]
-    const days = new Date(y, mo, 0).getDate()
-    for (const m of members) {
-      for (let d = 1; d <= days; d++) {
-        const date = `${month}-${String(d).padStart(2, '0')}`
-        const dow = '日月火水木金土'[new Date(y, mo - 1, d).getDay()]
-        const a = atts.find((x) => x.member_id === m.id && x.work_date === date)
-        const bs = [...(a?.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
-        const gross = a?.clock_in && a?.clock_out
-          ? (new Date(a.clock_out).getTime() - new Date(a.clock_in).getTime()) / 60000 : 0
-        const allBreaks = bs.reduce((s, b) => s + bMin(b), 0)
-        const rep = reps.find((r) => r.member_id === m.id && r.work_date === date)
-        rows.push([
-          m.name, date, dow,
-          t(a?.clock_in), t(bs[0]?.started_at), t(bs[0]?.ended_at), t(a?.clock_out),
-          t(bs[1]?.started_at), t(bs[1]?.ended_at), t(bs[2]?.started_at), t(bs[2]?.ended_at),
-          t(bs[3]?.started_at), t(bs[3]?.ended_at),
-          dur(gross), dur(bMin(bs[0])), dur(bMin(bs[1])), dur(bMin(bs[2])),
-          dur(Math.max(0, gross - allBreaks)),
-          rep?.body ?? a?.plan ?? '',
-        ])
-      }
-    }
-    const csv = '\uFEFF' + rows
-      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
-      .join('\r\n')
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-    const el = document.createElement('a')
-    el.href = url
-    el.download = `出勤簿_${month}.csv`
-    el.click()
-    URL.revokeObjectURL(url)
-  }
-
   const invite = async () => {
     setErr(''); setBusy(true)
     const { error } = await supabase.from('members').insert({ company_id: me.company_id, ...form })
@@ -1136,6 +1222,12 @@ function Members({ me }: { me: Member }) {
     setForm(BLANK_INVITE)
     setOpen(false)
     load()
+  }
+
+  if (invView) {
+    return <InvoiceView inv={invView}
+      memberName={members.find((m) => m.id === invView.member_id)?.name ?? ''}
+      onClose={() => setInvView(null)} />
   }
 
   return (
@@ -1178,6 +1270,13 @@ function Members({ me }: { me: Member }) {
                 <span> – </span>
                 <input type="time" value={hm(m.work_end)} disabled={!isAdmin}
                   onChange={(e) => changeHours(m, 'work_end', e.target.value)} />
+              </div>
+              <span className="m-hours-label" style={{ marginTop: 6 }}>時給（0=給与制）</span>
+              <div>
+                <span>¥ </span>
+                <input type="text" inputMode="numeric" className="rate-input"
+                  aria-label={`${m.name}の時給`} value={m.hourly_rate || 0} disabled={!isAdmin}
+                  onChange={(e) => changeRate(m, e.target.value)} />
               </div>
             </div>
           </div>
@@ -1250,7 +1349,8 @@ function Members({ me }: { me: Member }) {
           <h2>出勤簿の出力 <span className="tag">月末のCSV出力</span></h2>
           <div className="draft-times">
             <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
-            <button className="btn-primary" style={{ margin: 0 }} onClick={exportCsv}>CSVをダウンロード</button>
+            <button className="btn-primary" style={{ margin: 0 }}
+              onClick={() => exportKintaiCsv(members, month)}>CSVをダウンロード</button>
           </div>
           <div className="notice">
             全メンバーの1か月分を、現行の出勤簿スプレッドシートと同じ列構成
@@ -1259,7 +1359,120 @@ function Members({ me }: { me: Member }) {
         </div>
       )}
 
+      {isAdmin && invs.length > 0 && (
+        <div className="card">
+          <h2>請求書 <span className="tag">メンバーからの請求</span></h2>
+          <div className="list">
+            {invs.map((v) => (
+              <div key={v.id} className="list-item">
+                <div className="when">{v.month.replace('-', '/')}</div>
+                <div className="title">
+                  {members.find((m) => m.id === v.member_id)?.name ?? '—'} · 実働 {hmm(v.minutes)} · {yen(invoiceTotal(v))}
+                </div>
+                <button className="btn-outline" onClick={() => setInvView(v)}>表示</button>
+                {v.status === 'paid' ? (
+                  <span className="badge badge-blue">支払済み</span>
+                ) : (
+                  <button className="btn-primary" style={{ margin: 0 }} onClick={() => markPaid(v)}>支払済みにする</button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </>
+  )
+}
+
+/* ---------- 稼働と請求（プロフィール内・時給が設定されている人だけ） ---------- */
+function MyWork({ me }: { me: Member }) {
+  const [month, setMonth] = useState(today().slice(0, 7))
+  const [minutes, setMinutes] = useState(0)
+  const [inv, setInv] = useState<Invoice | null>(null) // その月の発行済み請求書
+  const [expenses, setExpenses] = useState<{ label: string; amount: number }[]>([])
+  const [expLabel, setExpLabel] = useState('')
+  const [expAmount, setExpAmount] = useState('')
+  const [view, setView] = useState(false)
+  const [err, setErr] = useState('')
+
+  const load = useCallback(async () => {
+    setMinutes(await monthWorkedMinutes(me.id, month))
+    const { data } = await supabase.from('invoices').select('*')
+      .eq('member_id', me.id).eq('month', month).maybeSingle()
+    setInv((data as Invoice | null) ?? null)
+  }, [me.id, month])
+
+  useEffect(() => { load() }, [load])
+
+  const addExpense = () => {
+    const amount = Number(expAmount)
+    if (!expLabel || !amount) return
+    setExpenses([...expenses, { label: expLabel, amount }])
+    setExpLabel(''); setExpAmount('')
+  }
+
+  const issue = async () => {
+    setErr('')
+    const { error } = await supabase.from('invoices').insert({
+      member_id: me.id, month, minutes: Math.round(minutes),
+      hourly_rate: me.hourly_rate, expenses,
+      status: 'issued', issued_at: new Date().toISOString(), paid_at: null,
+    })
+    if (error) return setErr(`発行できませんでした（${error.message}）`)
+    setExpenses([])
+    load()
+    setView(true)
+  }
+
+  const labor = Math.round((minutes / 60) * me.hourly_rate)
+
+  if (view && inv) return <InvoiceView inv={inv} memberName={me.name} onClose={() => setView(false)} />
+
+  return (
+    <div className="card">
+      <h2>稼働と請求 <span className="tag">実働 × 時給で請求書を発行</span></h2>
+      <div className="draft-times">
+        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+        <button className="btn-outline" onClick={() => exportKintaiCsv([me], month)}>稼働表CSV</button>
+      </div>
+      <div className="log-row">
+        <span className="d">実働</span>
+        <span className="t">{hmm(minutes)} × {yen(me.hourly_rate)}</span>
+        <span className="dur">{yen(labor)}</span>
+      </div>
+      {inv ? (
+        <>
+          <div className="notice">
+            この月の請求書は発行済みです（{inv.status === 'paid' ? '支払済み' : '支払待ち'}・合計 {yen(invoiceTotal(inv))}）
+          </div>
+          <button className="btn-primary" onClick={() => setView(true)}>請求書を表示</button>
+        </>
+      ) : (
+        <>
+          {expenses.map((e, i) => (
+            <div key={i} className="log-row">
+              <span className="d">経費</span>
+              <span className="t">{e.label}</span>
+              <span className="dur">{yen(e.amount)}</span>
+            </div>
+          ))}
+          <div className="draft-times" style={{ flexWrap: 'wrap' }}>
+            <input type="text" placeholder="経費の項目（例: 交通費）" style={{ width: 180 }}
+              value={expLabel} onChange={(e) => setExpLabel(e.target.value)} />
+            <input type="text" inputMode="numeric" placeholder="金額" style={{ width: 100 }}
+              value={expAmount} onChange={(e) => setExpAmount(e.target.value)} />
+            <button className="btn-outline" onClick={addExpense}>＋ 経費を追加</button>
+          </div>
+          {err && <div className="notice warn">{err}</div>}
+          <button className="btn-primary" disabled={minutes <= 0} onClick={issue}>
+            請求書を発行（{yen(labor + expenses.reduce((s, e) => s + e.amount, 0))}）
+          </button>
+          <div className="notice">
+            発行すると管理者に届き、確認後に支払済みになります。発行時点の実働と時給で金額が確定します
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -1338,6 +1551,8 @@ function Profile({ me, onRename }: { me: Member; onRename: (name: string) => voi
           <div className="notice">所定勤務時間帯の変更は管理者に依頼してください（打刻漏れ時の自動補完に使われます）</div>
         )}
       </div>
+
+      {me.hourly_rate > 0 && <MyWork me={me} />}
 
       <div className="card">
         <h2>外部サービス連携</h2>

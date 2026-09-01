@@ -474,3 +474,27 @@ tr:last-child td { border-bottom: none; }
 .log-row .d { min-width: 52px; font-weight: 700; }
 .log-row .t { color: #737373; }
 .log-row .dur { margin-left: auto; font-family: var(--mono); font-weight: 700; }
+
+/* 請求書（印刷用ビュー） */
+.invoice-page { padding: 8px 0; }
+.invoice { max-width: 640px; margin: 24px auto 0; }
+.invoice h1 { font-size: 28px; font-weight: 800; letter-spacing: 8px; border-bottom: 2px solid var(--ink); padding-bottom: 10px; }
+.invoice-head { display: flex; justify-content: space-between; align-items: flex-start; margin: 20px 0; gap: 16px; }
+.invoice-to { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+.invoice-meta { font-size: 13px; color: var(--muted); }
+.invoice-from { text-align: right; font-size: 14px; font-weight: 700; }
+.invoice-table { margin-top: 8px; }
+.invoice-table th { font-size: 12px; }
+.invoice-table td { font-variant-numeric: tabular-nums; }
+.invoice-table td:nth-child(n+2), .invoice-table th:nth-child(n+2) { text-align: right; }
+.invoice-total {
+  margin-top: 16px; padding-top: 12px; border-top: 2px solid var(--ink);
+  text-align: right; font-size: 20px; font-weight: 800;
+  font-variant-numeric: tabular-nums; font-family: var(--mono);
+}
+.rate-input { width: 80px; padding: 6px 8px; font-size: 13px; text-align: right; }
+@media print {
+  .header, .tabbar, .demo-fab, .demo-bar, .no-print { display: none !important; }
+  .app { padding: 0; max-width: none; }
+  body { background: #fff; }
+}
