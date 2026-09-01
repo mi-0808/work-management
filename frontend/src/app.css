@@ -272,11 +272,11 @@ tr:last-child td { border-bottom: none; }
 
 /* 名簿見出し右の招待ボタンと、控えめな参加コード行 */
 .h2-action {
-  margin-left: auto; border: 1px solid var(--line); background: #fff;
-  color: var(--accent-strong); border-radius: 999px; min-height: 44px; padding: 5px 16px;
+  margin-left: auto; border: none; background: var(--accent);
+  color: #fff; border-radius: 999px; min-height: 44px; padding: 5px 18px;
   font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
 }
-.h2-action:hover { border-color: var(--blue-600); background: var(--blue-50); }
+.h2-action:hover { background: var(--accent-strong); }
 .join-code-subtle {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
