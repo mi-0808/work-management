@@ -387,6 +387,78 @@ function TodayMeetings({ me }: { me: Member }) {
   )
 }
 
+/* ---------- 今週の予定（天気予報風ストリップ＋選択日の詳細） ---------- */
+function WeekPlan({ me }: { me: Member }) {
+  const [events, setEvents] = useState<ScheduleRow[]>([])
+  const [plans, setPlans] = useState<ReportRow[]>([])
+  const [sel, setSel] = useState(today())
+
+  useEffect(() => {
+    (async () => {
+      const until = new Date(); until.setDate(until.getDate() + 14)
+      const [{ data: ev }, { data: reps }] = await Promise.all([
+        supabase.from('schedules').select('*')
+          .eq('company_id', me.company_id).eq('status', 'confirmed'),
+        supabase.from('daily_reports').select('*').eq('member_id', me.id)
+          .gte('work_date', today()).lt('work_date', until.toLocaleDateString('sv-SE')),
+      ])
+      setEvents(((ev as ScheduleRow[]) ?? []).sort((a, b) => (a.starts_at < b.starts_at ? -1 : 1)))
+      setPlans((reps as ReportRow[]) ?? [])
+    })()
+  }, [me.company_id, me.id])
+
+  const hm2 = (iso: string) => new Date(iso).toTimeString().slice(0, 5)
+  const evDay = (e: ScheduleRow) => new Date(e.starts_at).toLocaleDateString('sv-SE')
+  const days = Array.from({ length: 14 }, (_, i) => {
+    const d = new Date(); d.setDate(d.getDate() + i)
+    const date = d.toLocaleDateString('sv-SE')
+    const rep = plans.find((r) => r.work_date === date)
+    const dow = d.getDay()
+    // 稼働時間: 稼働予定表に書いてあればそれ。なければ平日は所定、土日は休み扱い
+    const range = rep?.planned_start && rep?.planned_end
+      ? `${rep.planned_start.slice(0, 5).replace(/^0/, '')}–${rep.planned_end.slice(0, 5).replace(/^0/, '')}`
+      : (dow === 0 || dow === 6) ? null
+      : `${hm(me.work_start).replace(/^0/, '')}–${hm(me.work_end).replace(/^0/, '')}`
+    return { date, d, rep, range, meetings: events.filter((e) => evDay(e) === date) }
+  })
+  const selDay = days.find((x) => x.date === sel) ?? days[0]
+
+  return (
+    <div className="card">
+      <h2>今週の予定</h2>
+      <div className="week-strip" role="tablist" aria-label="日付を選択">
+        {days.map((x, i) => (
+          <button key={x.date} role="tab" aria-selected={x.date === sel}
+            className={`ws-day ${x.date === sel ? 'sel' : ''} ${x.range ? '' : 'off'}`}
+            onClick={() => setSel(x.date)}>
+            <span className="ws-dow">{i === 0 ? '今日' : '日月火水木金土'[x.d.getDay()]}</span>
+            <span className="ws-date">{x.d.getMonth() + 1}/{x.d.getDate()}</span>
+            <span className="ws-range">{x.range ?? '休み'}</span>
+            <span className="ws-dots" aria-label={`予定${x.meetings.length}件`}>
+              {x.meetings.length ? '●'.repeat(Math.min(x.meetings.length, 3)) : '–'}
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="week-detail">
+        <div className="wd-head">
+          {selDay.d.getMonth() + 1}/{selDay.d.getDate()}({'日月火水木金土'[selDay.d.getDay()]}) の詳細
+          <span className="tag">{selDay.range ? `稼働 ${selDay.range}` : '休み'}</span>
+        </div>
+        {selDay.meetings.map((e) => (
+          <div key={e.id} className="wd-row">
+            <b>{hm2(e.starts_at)}–{hm2(e.ends_at)}</b>
+            <span>{e.title}</span>
+            {e.with_meet && <span className="badge badge-blue">Meet</span>}
+          </div>
+        ))}
+        {selDay.meetings.length === 0 && <div className="wd-row empty-inline">ミーティングはありません</div>}
+        {selDay.rep?.plan && <div className="wd-plan">やること: {selDay.rep.plan}</div>}
+      </div>
+    </div>
+  )
+}
+
 /* ---------- 出勤・退勤 ---------- */
 function Home({ me }: { me: Member }) {
   const now = useClock()
@@ -679,6 +751,7 @@ function Home({ me }: { me: Member }) {
       </div>
 
       <TodayMeetings me={me} />
+      <WeekPlan me={me} />
       <PlanRows me={me} />
 
       <div className="card">
