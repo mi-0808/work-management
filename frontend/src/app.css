@@ -346,6 +346,17 @@ tr:last-child td { border-bottom: none; }
 .tl-block.draft { background: var(--accent); color: #fff; border: 2px dashed #fff; opacity: .92; }
 .tl-block.draft.conflict { background: var(--danger); }
 .draft-form { margin-top: 14px; }
+/* 提案中の予定: 点線+ラベルで「未確定」を色以外でも伝える */
+.tl-block.proposed {
+  background: #fff; color: var(--muted);
+  border: 1.5px dashed var(--muted); border-left: 3px dashed var(--muted);
+}
+.proposal {
+  border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px; margin-bottom: 10px; background: var(--accent-tint);
+}
+.proposal-title { font-size: 14px; }
+.proposal .draft-times { margin-top: 10px; }
 .preset-row { display: flex; gap: 8px; margin-bottom: 8px; }
 .preset-chip {
   border: 1px solid var(--line); background: #fff; border-radius: 999px;

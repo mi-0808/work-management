@@ -756,16 +756,29 @@ function Schedule({ me }: { me: Member }) {
   const [meet, setMeet] = useState(true)
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const [err, setErr] = useState('')
+  // 提案フロー: 宛先・受け取った提案のインライン修正
+  const [proposeTo, setProposeTo] = useState('')
+  const [colleagues, setColleagues] = useState<Member[]>([])
+  const [editProp, setEditProp] = useState<ScheduleRow | null>(null)
+  const [pStart, setPStart] = useState('')
+  const [pEnd, setPEnd] = useState('')
 
   const load = useCallback(async () => {
     const from = new Date(year, month, 1).toISOString()
     const to = new Date(year, month + 1, 1).toISOString()
     const { data } = await supabase.from('schedules').select('*')
       .gte('starts_at', from).lt('starts_at', to).order('starts_at')
-    setEvents(data ?? [])
+    // 却下された提案は表示しない
+    setEvents((data ?? []).filter((e: ScheduleRow) => e.status !== 'declined'))
   }, [year, month])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    supabase.from('members').select('*')
+      .eq('company_id', me.company_id).eq('status', 'active')
+      .then(({ data }) => setColleagues((data as Member[]) ?? []))
+  }, [me.company_id])
 
   const firstWeekday = new Date(year, month, 1).getDay()
   const daysInMonth = new Date(year, month + 1, 0).getDate()
@@ -818,10 +831,39 @@ function Schedule({ me }: { me: Member }) {
     const { error } = await supabase.from('schedules').insert({
       company_id: me.company_id, member_id: me.id, title,
       starts_at: mk(draft.start), ends_at: mk(draft.end), with_meet: meet,
+      ...(proposeTo ? { status: 'proposed', proposed_by: me.id, to_member_id: proposeTo } : {}),
     })
     if (error) return setErr(`予定を保存できませんでした（${error.message}）`)
-    setDraft(null); setTitle(''); setMeet(true)
+    setDraft(null); setTitle(''); setMeet(true); setProposeTo('')
     load()
+  }
+
+  /* 提案への応答。承認・修正・却下できるのは宛先（to_member_id）本人だけ */
+  const nameOf = (id: string | null) => colleagues.find((m) => m.id === id)?.name ?? '—'
+  const evDate = (e: ScheduleRow) =>
+    new Date(e.starts_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })
+  const incoming = events.filter((e) => e.status === 'proposed' && e.to_member_id === me.id)
+  const outgoing = events.filter((e) => e.status === 'proposed' && e.proposed_by === me.id)
+
+  const respond = async (e: ScheduleRow, patch: Partial<ScheduleRow>) => {
+    setErr('')
+    const { error } = await supabase.from('schedules').update(patch).eq('id', e.id)
+    if (error) return setErr(`更新できませんでした（${error.message}）`)
+    setEditProp(null)
+    load()
+  }
+  // 時刻を変えて提案し返す: proposed_by / to_member_id をスワップしてボールを相手に渡す
+  const counter = (e: ScheduleRow) => {
+    const mkOn = (t: string) => {
+      const d = new Date(e.starts_at)
+      const [h, m] = t.split(':').map(Number)
+      d.setHours(h, m, 0, 0)
+      return d.toISOString()
+    }
+    respond(e, {
+      starts_at: mkOn(pStart), ends_at: mkOn(pEnd),
+      proposed_by: me.id, to_member_id: e.proposed_by, status: 'proposed',
+    })
   }
 
   const block = (s: string, e: string) => ({
@@ -869,9 +911,11 @@ function Schedule({ me }: { me: Member }) {
             </div>
           ))}
           {dayEvents.map((e) => (
-            <div key={e.id} className={`tl-block ${isMine(e) ? 'me' : 'boss'}`}
+            <div key={e.id}
+              className={`tl-block ${isMine(e) ? 'me' : 'boss'} ${e.status === 'proposed' ? 'proposed' : ''}`}
               style={block(evStart(e), evEnd(e))} onPointerDown={(ev) => ev.stopPropagation()}>
               <b>{e.title}</b> {evStart(e)}–{evEnd(e)}{e.with_meet && ' · Meet'}
+              {e.status === 'proposed' && '（提案中）'}
             </div>
           ))}
           {draft && (
@@ -903,14 +947,72 @@ function Schedule({ me }: { me: Member }) {
               <input type="checkbox" checked={meet} onChange={(e) => setMeet(e.target.checked)} style={{ width: 'auto' }} />
               Google Meet のリンクを付ける
             </label>
+            <label htmlFor="sc-to">この予定の扱い</label>
+            <select id="sc-to" value={proposeTo} onChange={(e) => setProposeTo(e.target.value)}>
+              <option value="">すぐ確定する</option>
+              {colleagues.filter((m) => m.id !== me.id).map((m) => (
+                <option key={m.id} value={m.id}>{m.name}さんに提案する（承認をもらう）</option>
+              ))}
+            </select>
             {err && <div className="notice warn">{err}</div>}
             <button className="btn-primary" disabled={!title || !!conflict} onClick={add}>
-              追加してカレンダーに同期
+              {proposeTo ? `${nameOf(proposeTo)}さんに提案を送る` : '追加してカレンダーに同期'}
             </button>
           </div>
         )}
         {!draft && <div className="notice">タイムラインの空き時間をタップすると、そこに予定を作成できます</div>}
       </div>
+
+      {incoming.length > 0 && (
+        <div className="card">
+          <h2>あなたへの提案 <span className="tag">{incoming.length}件</span></h2>
+          {incoming.map((e) => (
+            <div key={e.id} className="proposal">
+              <div className="proposal-title">
+                <b>{e.title}</b> {evDate(e)} {evStart(e)}–{evEnd(e)}
+                {e.with_meet && ' · Meet'} — {nameOf(e.proposed_by)}さんから
+              </div>
+              {editProp?.id === e.id ? (
+                <div className="draft-times" style={{ flexWrap: 'wrap' }}>
+                  <input type="time" aria-label="開始時刻" value={pStart} onChange={(ev) => setPStart(ev.target.value)} />
+                  <span>–</span>
+                  <input type="time" aria-label="終了時刻" value={pEnd} onChange={(ev) => setPEnd(ev.target.value)} />
+                  <button className="btn-primary" style={{ margin: 0 }}
+                    disabled={!pStart || !pEnd || pEnd <= pStart} onClick={() => counter(e)}>
+                    この時間で再提案
+                  </button>
+                  <button className="btn-outline" onClick={() => setEditProp(null)}>キャンセル</button>
+                </div>
+              ) : (
+                <div className="form-actions" style={{ marginTop: 8 }}>
+                  <button className="btn-primary" style={{ margin: 0 }}
+                    onClick={() => respond(e, { status: 'confirmed' })}>承認</button>
+                  <button className="btn-outline"
+                    onClick={() => { setEditProp(e); setPStart(isoHm(e.starts_at)); setPEnd(isoHm(e.ends_at)) }}>
+                    時間を修正して再提案
+                  </button>
+                  <button className="btn-outline" onClick={() => respond(e, { status: 'declined' })}>却下</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {outgoing.length > 0 && (
+        <div className="card">
+          <h2>承認待ちの提案 <span className="tag">相手の返事待ち</span></h2>
+          <div className="list">
+            {outgoing.map((e) => (
+              <div key={e.id} className="list-item">
+                <div className="when">{evDate(e)} {evStart(e)}–{evEnd(e)}</div>
+                <div className="title">{e.title}</div>
+                <span className="badge badge-yellow">{nameOf(e.to_member_id)}さんの承認待ち</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </>
   )
 }

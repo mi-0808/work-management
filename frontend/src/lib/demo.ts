@@ -67,11 +67,14 @@ const daily_reports: Report[] = DEMO_MEMBERS.slice(0, 4).flatMap((m, mi) =>
     submitted_at: at(dayOffset(-i), 18, 30),
   })))
 
+const ok = { status: 'confirmed', proposed_by: null, to_member_id: null } as const
 const schedules: Schedule[] = [
-  { id: uid(), company_id: 'c1', member_id: 'm1', title: '定例MTG', starts_at: at(today(), 10), ends_at: at(today(), 11), kind: 'event', with_meet: true },
-  { id: uid(), company_id: 'c1', member_id: 'm2', title: '取引先訪問', starts_at: at(today(), 14), ends_at: at(today(), 16), kind: 'event', with_meet: false },
-  { id: uid(), company_id: 'c1', member_id: 'm3', title: '1on1', starts_at: at(dayOffset(1), 15), ends_at: at(dayOffset(1), 15, 30), kind: 'event', with_meet: true },
-  { id: uid(), company_id: 'c1', member_id: 'm1', title: '採用面接', starts_at: at(dayOffset(2), 13), ends_at: at(dayOffset(2), 14), kind: 'event', with_meet: true },
+  { id: uid(), company_id: 'c1', member_id: 'm1', title: '定例MTG', starts_at: at(today(), 10), ends_at: at(today(), 11), kind: 'event', with_meet: true, ...ok },
+  { id: uid(), company_id: 'c1', member_id: 'm2', title: '取引先訪問', starts_at: at(today(), 14), ends_at: at(today(), 16), kind: 'event', with_meet: false, ...ok },
+  { id: uid(), company_id: 'c1', member_id: 'm3', title: '1on1', starts_at: at(dayOffset(1), 15), ends_at: at(dayOffset(1), 15, 30), kind: 'event', with_meet: true, ...ok },
+  { id: uid(), company_id: 'c1', member_id: 'm1', title: '採用面接', starts_at: at(dayOffset(2), 13), ends_at: at(dayOffset(2), 14), kind: 'event', with_meet: true, ...ok },
+  // 佐藤→高橋への提案（承認フローのデモ用）
+  { id: uid(), company_id: 'c1', member_id: 'm2', title: '打ち合わせ', starts_at: at(today(), 15), ends_at: at(today(), 16), kind: 'event', with_meet: true, status: 'proposed', proposed_by: 'm2', to_member_id: 'm1' },
 ]
 
 const tables: Record<string, Record<string, unknown>[]> = {
@@ -122,6 +125,11 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
       const row: Row = { id: uid(), auto_in: false, auto_out: false, note: null, ...this.op.values }
       if (this.table === 'breaks') row.started_at ??= new Date().toISOString()
       if (this.table === 'breaks') row.ended_at ??= null
+      if (this.table === 'schedules') {
+        row.status ??= 'confirmed'
+        row.proposed_by ??= null
+        row.to_member_id ??= null
+      }
       rows.push(row)
       return { data: row, error: null }
     }

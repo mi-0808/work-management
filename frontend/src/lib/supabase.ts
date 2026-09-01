@@ -65,6 +65,9 @@ export type Schedule = {
   ends_at: string
   kind: 'shift' | 'event'
   with_meet: boolean
+  status: 'proposed' | 'confirmed' | 'declined'
+  proposed_by: string | null // 最後に提案した人
+  to_member_id: string | null // 提案の宛先（承認・修正できるのはこの人だけ）
 }
 
 export type Report = {
