@@ -370,7 +370,6 @@ function Home({ me }: { me: Member }) {
   const [reports, setReports] = useState<ReportRow[]>([])
   const [editDay, setEditDay] = useState<string | null>(null)
   const [dayBody, setDayBody] = useState('')
-  const myhood = useMyhood(me.company_id)
 
   const load = useCallback(async () => {
     const [{ data }, { data: reps }] = await Promise.all([
@@ -387,7 +386,7 @@ function Home({ me }: { me: Member }) {
     setWeek(data ?? [])
     const t = (data ?? []).find((a) => a.work_date === today()) ?? null
     setAtt(t)
-    if (t?.plan) setPlan(t.plan)
+    setPlan(((reps as ReportRow[]) ?? []).find((r) => r.work_date === today())?.plan ?? '')
   }, [me.id])
 
   useEffect(() => { load() }, [load])
@@ -475,12 +474,12 @@ function Home({ me }: { me: Member }) {
     load()
   }
 
-  // 「やったこと」＝その日の日報body。ここで書いても日報タブ・CSVの業務内容に反映される
+  // 「やったこと」＝稼働予定表と同じ daily_reports.plan。どちらで編集しても同期される
   const saveDayBody = async () => {
     if (!editDay) return
     setErr('')
     const { error } = await supabase.from('daily_reports').upsert(
-      { member_id: me.id, work_date: editDay, body: dayBody },
+      { member_id: me.id, work_date: editDay, plan: dayBody },
       { onConflict: 'member_id,work_date' },
     )
     if (error) return setErr(`保存できませんでした（${error.message}）`)
@@ -500,7 +499,16 @@ function Home({ me }: { me: Member }) {
   // 退勤後にまた稼働する場合。退勤時刻を消して勤務中に戻す
   const resume = () => save({ clock_out: null })
 
-  const savePlan = () => save({})
+  // 今日のやること: 稼働予定表（daily_reports.plan）と同じデータを読み書きして同期する
+  const saveTodayPlan = async () => {
+    setErr('')
+    const { error } = await supabase.from('daily_reports').upsert(
+      { member_id: me.id, work_date: today(), plan },
+      { onConflict: 'member_id,work_date' },
+    )
+    if (error) return setErr(`保存できませんでした（${error.message}）`)
+    load()
+  }
 
   // 中抜け（ランチ・私用など）。1日に何回でも
   const startBreak = async () => {
@@ -520,17 +528,6 @@ function Home({ me }: { me: Member }) {
     load()
   }
 
-  // 動画を撮る（選ぶ）とアップロードして予定を提出扱いに
-  // ponytail: MyHoodのAPIが使えるようになったら、ここからMyHoodにも同時投稿する
-  const planVideo = async (file: File | undefined) => {
-    if (!file) return
-    try {
-      const url = await uploadVideo(me.id, file)
-      save({ plan_video: url, plan: plan || '動画で提出' })
-    } catch (e) {
-      setErr(`動画をアップロードできませんでした（${(e as Error).message}）`)
-    }
-  }
 
   return (
     <>
@@ -648,25 +645,14 @@ function Home({ me }: { me: Member }) {
       </div>
 
       <div className="card">
-        <h2>今日の予定 <span className="tag">出勤時に登録</span></h2>
+        <h2>今日のやること <span className="tag">稼働予定表と同期</span></h2>
         <textarea
-          placeholder="今日やる予定を入力（例: 新規案件の見積もり作成、15時から定例MTG）"
+          aria-label="今日のやること"
+          placeholder="今日やることを入力（稼働予定表にもそのまま反映されます）"
           value={plan}
           onChange={(e) => setPlan(e.target.value)}
+          onBlur={saveTodayPlan}
         />
-        <div className="form-actions">
-          <button className="btn-primary" style={{ margin: 0 }} disabled={!plan} onClick={savePlan}>予定を保存</button>
-          {myhood && (
-            <label className="btn-outline" style={{ cursor: 'pointer' }}>
-              🎥 MyHood
-              <input type="file" accept="video/*" capture hidden
-                onChange={(e) => planVideo(e.target.files?.[0])} />
-            </label>
-          )}
-        </div>
-        {playable(att?.plan_video ?? null) && (
-          <video className="report-video" src={att!.plan_video!} controls playsInline />
-        )}
       </div>
 
       <div className="card">
@@ -674,9 +660,9 @@ function Home({ me }: { me: Member }) {
         {week.length === 0 ? <div className="empty">まだ勤怠記録がありません</div> : (
           week.map((a) => {
             const bm = breakMinutes(a.breaks)
-            // 稼働予定表の「やること」と同期: 実績(body)が未記入ならやること(plan)を表示・編集の下書きにする
+            // 稼働予定表の「やること」(plan)と同一データ。旧データはbodyに残っているので後ろで拾う
             const rep = reports.find((r) => r.work_date === a.work_date)
-            const body = rep?.body || rep?.plan || ''
+            const body = rep?.plan || rep?.body || ''
             return (
               <div key={a.id} className="log-entry">
                 <div className="log-row">
@@ -836,7 +822,6 @@ function PlanRows({ me }: { me: Member }) {
 /* ---------- 日報 ---------- */
 function Report({ me }: { me: Member }) {
   const [body, setBody] = useState('')
-  const [plan, setTodayPlan] = useState<string | null>(null)
   const [history, setHistory] = useState<ReportRow[]>([])
   const [saved, setSaved] = useState(false)
   const [showReports, setShowReports] = useState(false) // 日報の記入・過去分はボタンで開く
@@ -844,14 +829,10 @@ function Report({ me }: { me: Member }) {
   const myhood = useMyhood(me.company_id)
 
   const load = useCallback(async () => {
-    const [{ data: reports }, { data: att }] = await Promise.all([
-      supabase.from('daily_reports').select('*').eq('member_id', me.id)
-        .order('work_date', { ascending: false }),
-      supabase.from('attendances').select('plan').eq('member_id', me.id).eq('work_date', today()).maybeSingle(),
-    ])
+    const { data: reports } = await supabase.from('daily_reports').select('*').eq('member_id', me.id)
+      .order('work_date', { ascending: false })
     // 予定だけの未来行（body空）は日報の履歴には出さない
     setHistory((reports ?? []).filter((r) => r.body))
-    setTodayPlan(att?.plan ?? null)
     const t = (reports ?? []).find((r) => r.work_date === today())
     if (t) { setBody(t.body === '動画で提出' ? '' : t.body); setSaved(true) }
   }, [me.id])
@@ -892,10 +873,6 @@ function Report({ me }: { me: Member }) {
       {showReports && (<>
       <div className="card">
         <h2>今日の日報 <span className="tag">{today().slice(5).replace('-', '/')}</span></h2>
-        <label>今日の予定（出勤時に登録）</label>
-        <div className="list-item">
-          <div className="title">{plan || '未登録'}</div>
-        </div>
         <label>業務内容（実績）</label>
         <textarea placeholder="今日行った業務を入力" value={body}
           onChange={(e) => { setBody(e.target.value); setSaved(false) }} />
