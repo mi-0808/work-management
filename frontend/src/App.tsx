@@ -944,6 +944,9 @@ function KintaiTable({ me }: { me: Member }) {
     flash(date)
     load()
   }
+  const breakList = (a: Attendance) =>
+    [...(a.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
+      .map((b) => `${fmtTime(b.started_at)}–${b.ended_at ? fmtTime(b.ended_at) : ''}`)
   const fmtBreaks = (a: Attendance) =>
     [...(a.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
       .map((b) => `${fmtTime(b.started_at)}–${b.ended_at ? fmtTime(b.ended_at) : ''}`).join(', ')
@@ -1026,10 +1029,19 @@ function KintaiTable({ me }: { me: Member }) {
                             const v = normTime(e.target.value)
                             if (v !== (a.clock_out ? fmtTime(a.clock_out) : '')) saveActual(a.work_date, 'clock_out', v)
                           }} /></td>
-                        <td className="pt-breaks"><input type="text" inputMode="numeric" placeholder="1200-1300"
-                          key={`br-${a.id}-${fmtBreaks(a)}`} aria-label={`${fmtDate(a.work_date)}の中抜け（1200-1300形式）`}
-                          defaultValue={fmtBreaks(a)}
-                          onBlur={(e) => { if (e.target.value.trim() !== fmtBreaks(a)) saveBreaks(a, e.target.value) }} /></td>
+                        {/* 中抜けは1件1欄。末尾の空欄に入力すると追加、消すと削除 */}
+                        <td className="pt-breaks" key={`br-${a.id}-${fmtBreaks(a)}`}>
+                          {[...breakList(a), ''].map((val, i) => (
+                            <input key={`${a.id}-${i}-${val}`} type="text" inputMode="numeric"
+                              placeholder="1200-1300" defaultValue={val}
+                              aria-label={`${fmtDate(a.work_date)}の中抜け${i + 1}（1200-1300形式）`}
+                              onBlur={(e) => {
+                                const all = [...e.currentTarget.closest('td')!.querySelectorAll('input')]
+                                  .map((x) => x.value.trim()).filter(Boolean).join(', ')
+                                if (all !== fmtBreaks(a)) saveBreaks(a, all)
+                              }} />
+                          ))}
+                        </td>
                       </>
                     )}
                     <td className="pt-time pt-worked-cell">{a.clock_out ? workedLabel(a) : '勤務中'}</td>

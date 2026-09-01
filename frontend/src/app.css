@@ -609,8 +609,8 @@ tr:last-child td { border-bottom: none; }
 .pt-fix-btn:hover { background: var(--success-bg); }
 .pt-fix-btn.on:hover { background: var(--success); opacity: .85; }
 .plan-table .pt-breaks input {
-  border: none; border-radius: 0; background: none;
-  field-sizing: content; min-width: 128px; max-width: 380px;
+  display: block; border: none; border-radius: 0; background: none;
+  width: 118px;
   min-height: 36px; padding: 8px 10px; font-size: 12px; font-variant-numeric: tabular-nums;
 }
 .plan-table .pt-breaks input:hover { background: var(--surface-2); }
