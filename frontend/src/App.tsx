@@ -2,12 +2,20 @@ import { useCallback, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isProviderEnabled, supabase, today } from './lib/supabase'
 import { DEMO, DEMO_MEMBERS } from './lib/demo'
-import type { Attendance, Break, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
+import type { Attendance, Break, Invoice, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
 
 type Tab = 'home' | 'report' | 'schedule' | 'members' | 'profile'
 
 const fmtTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'
+const isoHm = (iso: string | null) => (iso ? new Date(iso).toTimeString().slice(0, 5) : '')
+// "HH:MM" → 今日のその時刻のISO
+const hmToIso = (t: string) => {
+  const d = new Date()
+  const [h, m] = t.split(':').map(Number)
+  d.setHours(h, m, 0, 0)
+  return d.toISOString()
+}
 const hm = (t: string) => t.slice(0, 5) // "09:00:00" → "09:00"
 const toMin = (t: string) => {
   const [h, m] = t.split(':').map(Number)
@@ -39,6 +47,27 @@ function useClock() {
     return () => clearInterval(id)
   }, [])
   return now
+}
+
+// 動画をアップロードして公開URLを返す（本番はSupabase Storage、デモはblob URL）
+const uploadVideo = async (memberId: string, file: File) => {
+  const path = `${memberId}/${Date.now()}-${file.name}`
+  const { error } = await supabase.storage.from('videos').upload(path, file)
+  if (error) throw new Error(error.message)
+  return supabase.storage.from('videos').getPublicUrl(path).data.publicUrl
+}
+
+// URLとして再生できる値か（旧データはファイル名だけが入っている）
+const playable = (v: string | null): v is string => !!v && v.includes(':')
+
+// 会社のMyHood投稿先URL（管理者が名簿タブで設定。未設定ならnull）
+function useMyhood(companyId: string) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    supabase.from('companies').select('myhood_url').eq('id', companyId).maybeSingle()
+      .then(({ data }) => setUrl((data as { myhood_url?: string | null } | null)?.myhood_url ?? null))
+  }, [companyId])
+  return url
 }
 
 /* ---------- 認証 ---------- */
@@ -333,6 +362,11 @@ function Home({ me }: { me: Member }) {
   const [week, setWeek] = useState<Attendance[]>([])
   const [plan, setPlan] = useState('')
   const [err, setErr] = useState('')
+  // 押し忘れ修正用: ボタン内で時刻を直接編集する（'in' | 'out' | 中抜けのid | 編集中でなければnull）
+  const [editing, setEditing] = useState<string | null>(null)
+  const [editTime, setEditTime] = useState('')
+  const [editTime2, setEditTime2] = useState('') // 中抜けの終了時刻用
+  const myhood = useMyhood(me.company_id)
 
   const load = useCallback(async () => {
     const { data } = await supabase
@@ -362,14 +396,15 @@ function Home({ me }: { me: Member }) {
       { onConflict: 'member_id,work_date' },
     )
     if (error) return setErr(`保存できませんでした（${error.message}）。ログインし直してもう一度お試しください`)
+    setEditing(null)
     load()
   }
 
   const punchIn = () => save({ clock_in: new Date().toISOString() })
 
   // 退勤のみ → 出勤を所定開始時刻で自動補完
-  const punchOut = () => {
-    const patch: Partial<Attendance> = { clock_out: new Date().toISOString() }
+  const punchOut = (clockOut = new Date().toISOString()) => {
+    const patch: Partial<Attendance> = { clock_out: clockOut }
     if (!att?.clock_in) {
       const d = new Date()
       const [h, m] = hm(me.work_start).split(':').map(Number)
@@ -378,6 +413,39 @@ function Home({ me }: { me: Member }) {
       patch.auto_in = true
     }
     return save(patch)
+  }
+
+  // ボタン内の時刻エディタを開く（現在の記録があればそれを初期値に）
+  const openEdit = (key: 'in' | 'out') => {
+    setEditing(key)
+    setEditTime(isoHm(key === 'in' ? att?.clock_in ?? null : att?.clock_out ?? null))
+  }
+
+  const openBreakEdit = (b: Break) => {
+    setEditing(b.id)
+    setEditTime(isoHm(b.started_at))
+    setEditTime2(isoHm(b.ended_at))
+  }
+
+  const commitEdit = async () => {
+    if (!editing) return
+    if (editing === 'in') {
+      if (editTime) save({ clock_in: hmToIso(editTime), auto_in: false })
+      return setEditing(null)
+    }
+    if (editing === 'out') {
+      if (editTime) punchOut(hmToIso(editTime))
+      return setEditing(null)
+    }
+    // 中抜け: 開始・終了をまとめて更新（終了を空にすると「中抜け中」に戻る）
+    setErr('')
+    const { error } = await supabase.from('breaks').update({
+      ...(editTime ? { started_at: hmToIso(editTime) } : {}),
+      ended_at: editTime2 ? hmToIso(editTime2) : null,
+    }).eq('id', editing)
+    if (error) return setErr(`休憩時刻を変更できませんでした（${error.message}）`)
+    setEditing(null)
+    load()
   }
 
   // 退勤後にまた稼働する場合。退勤時刻を消して勤務中に戻す
@@ -403,36 +471,111 @@ function Home({ me }: { me: Member }) {
     load()
   }
 
+  // 動画を撮る（選ぶ）とアップロードして予定を提出扱いに
+  // ponytail: MyHoodのAPIが使えるようになったら、ここからMyHoodにも同時投稿する
+  const planVideo = async (file: File | undefined) => {
+    if (!file) return
+    try {
+      const url = await uploadVideo(me.id, file)
+      save({ plan_video: url, plan: plan || '動画で提出' })
+    } catch (e) {
+      setErr(`動画をアップロードできませんでした（${(e as Error).message}）`)
+    }
+  }
+
   return (
     <>
       <div className="hero">
         <div className="date">
           {now.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}
+          {' · '}<b>{status}</b>
         </div>
         <div className="clock">
-          {now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          {now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+          <span className="sec">:{String(now.getSeconds()).padStart(2, '0')}</span>
         </div>
-        <div className="status-chip"><span className="dot" />{status}</div>
-        {err && <div className="notice warn" style={{ position: 'relative', zIndex: 1 }}>{err}</div>}
+        {err && <div className="notice warn">{err}</div>}
         <div className="punch-row">
-          <button className="btn btn-in" disabled={!!att?.clock_in} onClick={punchIn}>
-            {att?.clock_in ? `出勤 ${fmtTime(att.clock_in)}` : '出勤する'}
-          </button>
-          {att?.clock_out ? (
-            <button className="btn btn-out" onClick={resume}>勤務を再開</button>
+          {editing === 'in' ? (
+            <div className="btn btn-in btn-editing">
+              <span>出勤</span>
+              <input type="time" autoFocus aria-label="出勤時刻" value={editTime}
+                onChange={(e) => setEditTime(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && commitEdit()} />
+              <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
+              <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
+            </div>
           ) : (
-            <button className="btn btn-out" disabled={!!openBreak} onClick={punchOut}>退勤する</button>
+            <div className="btn-split">
+              <button className="btn btn-in" disabled={!!att?.clock_in} onClick={punchIn}>
+                {att?.clock_in ? `出勤 ${fmtTime(att.clock_in)}` : '出勤する'}
+              </button>
+              <button className="icon-btn on-in" aria-label="出勤時刻を指定・修正"
+                onClick={() => openEdit('in')}>✎</button>
+            </div>
+          )}
+          {editing === 'out' ? (
+            <div className="btn btn-out btn-editing">
+              <span>退勤</span>
+              <input type="time" autoFocus aria-label="退勤時刻" value={editTime}
+                onChange={(e) => setEditTime(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && commitEdit()} />
+              <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
+              <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
+            </div>
+          ) : (
+            <div className="btn-split">
+              {att?.clock_out ? (
+                <button className="btn btn-out" onClick={resume}>勤務を再開</button>
+              ) : (
+                <button className="btn btn-out" disabled={!!openBreak} onClick={() => punchOut()}>退勤する</button>
+              )}
+              <button className="icon-btn on-out" aria-label="退勤時刻を指定・修正（押し忘れの修正）"
+                onClick={() => openEdit('out')}>✎</button>
+            </div>
           )}
         </div>
-        {att?.clock_in && !att.clock_out && (
-          <div className="punch-row" style={{ marginTop: 10 }}>
-            {openBreak ? (
-              <button className="btn btn-break-end" onClick={endBreak}>
-                中抜けを終了（{fmtTime(openBreak.started_at)}〜）
-              </button>
+        {att?.clock_in && (
+          <div className="punch-row" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+            {(att.breaks ?? []).filter((b) => b.ended_at).map((b) =>
+              editing === b.id ? (
+                <div key={b.id} className="btn btn-break btn-editing">
+                  <span>中抜け</span>
+                  <input type="time" autoFocus aria-label="中抜け開始" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
+                  <span>–</span>
+                  <input type="time" aria-label="中抜け終了" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
+                  <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
+                  <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
+                </div>
+              ) : (
+                <div key={b.id} className="btn-split chip">
+                  <span className="btn btn-chip">中抜け {fmtTime(b.started_at)}–{fmtTime(b.ended_at)}</span>
+                  <button className="icon-btn on-chip" aria-label="この中抜けの時刻を修正"
+                    onClick={() => openBreakEdit(b)}>✎</button>
+                </div>
+              ))}
+            {!att.clock_out && (openBreak ? (
+              editing === openBreak.id ? (
+                <div className="btn btn-break btn-editing">
+                  <span>中抜け</span>
+                  <input type="time" autoFocus aria-label="中抜け開始" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
+                  <span>–</span>
+                  <input type="time" aria-label="中抜け終了" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
+                  <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
+                  <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
+                </div>
+              ) : (
+                <div className="btn-split">
+                  <button className="btn btn-break-end" onClick={endBreak}>
+                    中抜けを終了（{fmtTime(openBreak.started_at)}〜）
+                  </button>
+                  <button className="icon-btn on-break" aria-label="中抜けの開始時刻を修正"
+                    onClick={() => openBreakEdit(openBreak)}>✎</button>
+                </div>
+              )
             ) : (
               <button className="btn btn-break" onClick={startBreak}>中抜け・休憩を開始</button>
-            )}
+            ))}
           </div>
         )}
         {att?.clock_out && (
@@ -447,35 +590,38 @@ function Home({ me }: { me: Member }) {
           value={plan}
           onChange={(e) => setPlan(e.target.value)}
         />
-        <button className="btn-primary" disabled={!plan} onClick={savePlan}>予定を保存</button>
+        <div className="form-actions">
+          <button className="btn-primary" style={{ margin: 0 }} disabled={!plan} onClick={savePlan}>予定を保存</button>
+          {myhood && (
+            <label className="btn-outline" style={{ cursor: 'pointer' }}>
+              🎥 MyHood
+              <input type="file" accept="video/*" capture hidden
+                onChange={(e) => planVideo(e.target.files?.[0])} />
+            </label>
+          )}
+        </div>
+        {playable(att?.plan_video ?? null) && (
+          <video className="report-video" src={att!.plan_video!} controls playsInline />
+        )}
       </div>
 
       <div className="card">
         <h2>最近の勤怠</h2>
         {week.length === 0 ? <div className="empty">まだ勤怠記録がありません</div> : (
-          <table>
-            <thead>
-              <tr><th>日付</th><th>出勤</th><th>退勤</th><th>中抜け</th><th>実働</th><th>状態</th></tr>
-            </thead>
-            <tbody>
-              {week.map((a) => {
-                const bm = breakMinutes(a.breaks)
-                return (
-                  <tr key={a.id}>
-                    <td>{a.work_date.slice(5).replace('-', '/')}</td>
-                    <td>{fmtTime(a.clock_in)}</td>
-                    <td>{fmtTime(a.clock_out)}</td>
-                    <td>{bm > 0 ? `${Math.round(bm)}分` : '—'}</td>
-                    <td>{a.clock_in ? workedLabel(a) : '—'}</td>
-                    <td>
-                      {(a.auto_in || a.auto_out) && <span className="badge badge-yellow">自動補完</span>}{' '}
-                      <span className="badge badge-blue">{a.clock_out ? '退勤済み' : a.clock_in ? '勤務中' : '—'}</span>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+          week.map((a) => {
+            const bm = breakMinutes(a.breaks)
+            return (
+              <div key={a.id} className="log-row">
+                <span className="d">{a.work_date.slice(5).replace('-', '/')}</span>
+                <span className="t">
+                  {fmtTime(a.clock_in)} – {a.clock_out ? fmtTime(a.clock_out) : '勤務中'}
+                  {bm > 0 && ` · 中抜け${Math.round(bm)}分`}
+                </span>
+                {(a.auto_in || a.auto_out) && <span className="badge badge-yellow">⚠ 自動補完</span>}
+                <span className="dur">{a.clock_in ? workedLabel(a) : '—'}</span>
+              </div>
+            )
+          })
         )}
         {att?.auto_in && (
           <div className="notice">
@@ -494,6 +640,7 @@ function Report({ me }: { me: Member }) {
   const [history, setHistory] = useState<ReportRow[]>([])
   const [saved, setSaved] = useState(false)
   const [err, setErr] = useState('')
+  const myhood = useMyhood(me.company_id)
 
   const load = useCallback(async () => {
     const [{ data: reports }, { data: att }] = await Promise.all([
@@ -504,20 +651,33 @@ function Report({ me }: { me: Member }) {
     setHistory(reports ?? [])
     setTodayPlan(att?.plan ?? null)
     const t = (reports ?? []).find((r) => r.work_date === today())
-    if (t) { setBody(t.body); setSaved(true) }
+    if (t) { setBody(t.body === '動画で提出' ? '' : t.body); setSaved(true) }
   }, [me.id])
 
   useEffect(() => { load() }, [load])
 
-  const submit = async () => {
+  const todayRep = history.find((r) => r.work_date === today())
+
+  const submit = async (video?: string) => {
     setErr('')
     const { error } = await supabase.from('daily_reports').upsert(
-      { member_id: me.id, work_date: today(), body },
+      { member_id: me.id, work_date: today(), body: body || '動画で提出', ...(video ? { video } : {}) },
       { onConflict: 'member_id,work_date' },
     )
     if (error) return setErr(`提出できませんでした（${error.message}）`)
     setSaved(true)
     load()
+  }
+
+  // 動画を撮る（選ぶ）とアップロードして日報を提出扱いに
+  // ponytail: MyHoodのAPIが使えるようになったら、ここからMyHoodにも同時投稿する
+  const submitVideo = async (file: File | undefined) => {
+    if (!file) return
+    try {
+      submit(await uploadVideo(me.id, file))
+    } catch (e) {
+      setErr(`動画をアップロードできませんでした（${(e as Error).message}）`)
+    }
   }
 
   return (
@@ -532,9 +692,22 @@ function Report({ me }: { me: Member }) {
         <textarea placeholder="今日行った業務を入力" value={body}
           onChange={(e) => { setBody(e.target.value); setSaved(false) }} />
         {err && <div className="notice warn">{err}</div>}
-        <button className="btn-primary" disabled={!body || saved} onClick={submit}>
-          {saved ? '提出済み ✓' : '日報を提出'}
-        </button>
+        <div className="form-actions">
+          <button className="btn-primary" style={{ margin: 0 }} disabled={!body || saved} onClick={() => submit()}>
+            {saved ? '提出済み ✓' : '日報を提出'}
+          </button>
+          {myhood && (
+            <label className="btn-outline" style={{ cursor: 'pointer' }}>
+              🎥 MyHood
+              <input type="file" accept="video/*" capture hidden
+                onChange={(e) => submitVideo(e.target.files?.[0])} />
+            </label>
+          )}
+        </div>
+        {playable(todayRep?.video ?? null) && (
+          <video className="report-video" src={todayRep!.video!} controls playsInline />
+        )}
+        {myhood && <div className="notice">動画を撮って（選んで）アップロードすると、それだけで提出扱いになります</div>}
       </div>
 
       <div className="card">
@@ -545,7 +718,8 @@ function Report({ me }: { me: Member }) {
               <div key={r.id} className="list-item">
                 <div className="when">{r.work_date.slice(5).replace('-', '/')}</div>
                 <div className="title">{r.body}</div>
-                <span className="badge badge-blue">提出済</span>
+                {playable(r.video) && <video className="report-video" src={r.video} controls playsInline />}
+                <span className="badge badge-blue">{r.video ? '動画提出' : '提出済'}</span>
               </div>
             ))}
           </div>
@@ -572,16 +746,29 @@ function Schedule({ me }: { me: Member }) {
   const [meet, setMeet] = useState(true)
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const [err, setErr] = useState('')
+  // 提案フロー: 宛先・受け取った提案のインライン修正
+  const [proposeTo, setProposeTo] = useState('')
+  const [colleagues, setColleagues] = useState<Member[]>([])
+  const [editProp, setEditProp] = useState<ScheduleRow | null>(null)
+  const [pStart, setPStart] = useState('')
+  const [pEnd, setPEnd] = useState('')
 
   const load = useCallback(async () => {
     const from = new Date(year, month, 1).toISOString()
     const to = new Date(year, month + 1, 1).toISOString()
     const { data } = await supabase.from('schedules').select('*')
       .gte('starts_at', from).lt('starts_at', to).order('starts_at')
-    setEvents(data ?? [])
+    // 却下された提案は表示しない
+    setEvents((data ?? []).filter((e: ScheduleRow) => e.status !== 'declined'))
   }, [year, month])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    supabase.from('members').select('*')
+      .eq('company_id', me.company_id).eq('status', 'active')
+      .then(({ data }) => setColleagues((data as Member[]) ?? []))
+  }, [me.company_id])
 
   const firstWeekday = new Date(year, month, 1).getDay()
   const daysInMonth = new Date(year, month + 1, 0).getDate()
@@ -634,10 +821,39 @@ function Schedule({ me }: { me: Member }) {
     const { error } = await supabase.from('schedules').insert({
       company_id: me.company_id, member_id: me.id, title,
       starts_at: mk(draft.start), ends_at: mk(draft.end), with_meet: meet,
+      ...(proposeTo ? { status: 'proposed', proposed_by: me.id, to_member_id: proposeTo } : {}),
     })
     if (error) return setErr(`予定を保存できませんでした（${error.message}）`)
-    setDraft(null); setTitle(''); setMeet(true)
+    setDraft(null); setTitle(''); setMeet(true); setProposeTo('')
     load()
+  }
+
+  /* 提案への応答。承認・修正・却下できるのは宛先（to_member_id）本人だけ */
+  const nameOf = (id: string | null) => colleagues.find((m) => m.id === id)?.name ?? '—'
+  const evDate = (e: ScheduleRow) =>
+    new Date(e.starts_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })
+  const incoming = events.filter((e) => e.status === 'proposed' && e.to_member_id === me.id)
+  const outgoing = events.filter((e) => e.status === 'proposed' && e.proposed_by === me.id)
+
+  const respond = async (e: ScheduleRow, patch: Partial<ScheduleRow>) => {
+    setErr('')
+    const { error } = await supabase.from('schedules').update(patch).eq('id', e.id)
+    if (error) return setErr(`更新できませんでした（${error.message}）`)
+    setEditProp(null)
+    load()
+  }
+  // 時刻を変えて提案し返す: proposed_by / to_member_id をスワップしてボールを相手に渡す
+  const counter = (e: ScheduleRow) => {
+    const mkOn = (t: string) => {
+      const d = new Date(e.starts_at)
+      const [h, m] = t.split(':').map(Number)
+      d.setHours(h, m, 0, 0)
+      return d.toISOString()
+    }
+    respond(e, {
+      starts_at: mkOn(pStart), ends_at: mkOn(pEnd),
+      proposed_by: me.id, to_member_id: e.proposed_by, status: 'proposed',
+    })
   }
 
   const block = (s: string, e: string) => ({
@@ -685,9 +901,11 @@ function Schedule({ me }: { me: Member }) {
             </div>
           ))}
           {dayEvents.map((e) => (
-            <div key={e.id} className={`tl-block ${isMine(e) ? 'me' : 'boss'}`}
+            <div key={e.id}
+              className={`tl-block ${isMine(e) ? 'me' : 'boss'} ${e.status === 'proposed' ? 'proposed' : ''}`}
               style={block(evStart(e), evEnd(e))} onPointerDown={(ev) => ev.stopPropagation()}>
               <b>{e.title}</b> {evStart(e)}–{evEnd(e)}{e.with_meet && ' · Meet'}
+              {e.status === 'proposed' && '（提案中）'}
             </div>
           ))}
           {draft && (
@@ -719,15 +937,200 @@ function Schedule({ me }: { me: Member }) {
               <input type="checkbox" checked={meet} onChange={(e) => setMeet(e.target.checked)} style={{ width: 'auto' }} />
               Google Meet のリンクを付ける
             </label>
+            <label htmlFor="sc-to">この予定の扱い</label>
+            <select id="sc-to" value={proposeTo} onChange={(e) => setProposeTo(e.target.value)}>
+              <option value="">すぐ確定する</option>
+              {colleagues.filter((m) => m.id !== me.id).map((m) => (
+                <option key={m.id} value={m.id}>{m.name}さんに提案する（承認をもらう）</option>
+              ))}
+            </select>
             {err && <div className="notice warn">{err}</div>}
             <button className="btn-primary" disabled={!title || !!conflict} onClick={add}>
-              追加してカレンダーに同期
+              {proposeTo ? `${nameOf(proposeTo)}さんに提案を送る` : '追加してカレンダーに同期'}
             </button>
           </div>
         )}
         {!draft && <div className="notice">タイムラインの空き時間をタップすると、そこに予定を作成できます</div>}
       </div>
+
+      {incoming.length > 0 && (
+        <div className="card">
+          <h2>あなたへの提案 <span className="tag">{incoming.length}件</span></h2>
+          {incoming.map((e) => (
+            <div key={e.id} className="proposal">
+              <div className="proposal-title">
+                <b>{e.title}</b> {evDate(e)} {evStart(e)}–{evEnd(e)}
+                {e.with_meet && ' · Meet'} — {nameOf(e.proposed_by)}さんから
+              </div>
+              {editProp?.id === e.id ? (
+                <div className="draft-times" style={{ flexWrap: 'wrap' }}>
+                  <input type="time" aria-label="開始時刻" value={pStart} onChange={(ev) => setPStart(ev.target.value)} />
+                  <span>–</span>
+                  <input type="time" aria-label="終了時刻" value={pEnd} onChange={(ev) => setPEnd(ev.target.value)} />
+                  <button className="btn-primary" style={{ margin: 0 }}
+                    disabled={!pStart || !pEnd || pEnd <= pStart} onClick={() => counter(e)}>
+                    この時間で再提案
+                  </button>
+                  <button className="btn-outline" onClick={() => setEditProp(null)}>キャンセル</button>
+                </div>
+              ) : (
+                <div className="form-actions" style={{ marginTop: 8 }}>
+                  <button className="btn-primary" style={{ margin: 0 }}
+                    onClick={() => respond(e, { status: 'confirmed' })}>承認</button>
+                  <button className="btn-outline"
+                    onClick={() => { setEditProp(e); setPStart(isoHm(e.starts_at)); setPEnd(isoHm(e.ends_at)) }}>
+                    時間を修正して再提案
+                  </button>
+                  <button className="btn-outline" onClick={() => respond(e, { status: 'declined' })}>却下</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {outgoing.length > 0 && (
+        <div className="card">
+          <h2>承認待ちの提案 <span className="tag">相手の返事待ち</span></h2>
+          <div className="list">
+            {outgoing.map((e) => (
+              <div key={e.id} className="list-item">
+                <div className="when">{evDate(e)} {evStart(e)}–{evEnd(e)}</div>
+                <div className="title">{e.title}</div>
+                <span className="badge badge-yellow">{nameOf(e.to_member_id)}さんの承認待ち</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </>
+  )
+}
+
+/* ---------- 稼働表CSV・請求書（名簿タブとプロフィールで共用） ---------- */
+const yen = (n: number) => `¥${Math.round(n).toLocaleString('ja-JP')}`
+const hmm = (min: number) => `${Math.floor(min / 60)}:${String(Math.round(min % 60)).padStart(2, '0')}`
+const monthRange = (month: string) => {
+  const [y, mo] = month.split('-').map(Number)
+  return { from: `${month}-01`, to: new Date(y, mo, 1).toLocaleDateString('sv-SE'), y, mo }
+}
+
+// その月の実働合計（分）。休憩を引いた workedMinutes を日ごとに合算
+const monthWorkedMinutes = async (memberId: string, month: string) => {
+  const { from, to } = monthRange(month)
+  const { data } = await supabase.from('attendances').select('*, breaks(*)')
+    .eq('member_id', memberId).gte('work_date', from).lt('work_date', to)
+  return ((data as Attendance[]) ?? []).reduce((sum, a) => sum + workedMinutes(a), 0)
+}
+
+// 出勤簿CSV（現行スプレッドシートの列構成に合わせる。最初の中抜け＝ランチ扱い）
+const exportKintaiCsv = async (targets: Pick<Member, 'id' | 'name'>[], month: string) => {
+  const { from, to, y, mo } = monthRange(month)
+  const atts: Attendance[] = []
+  const reps: ReportRow[] = []
+  // ponytail: メンバーごとに直列fetch。人数が増えて遅くなったらin()で一括に
+  for (const m of targets) {
+    const [{ data: a }, { data: r }] = await Promise.all([
+      supabase.from('attendances').select('*, breaks(*)').eq('member_id', m.id)
+        .gte('work_date', from).lt('work_date', to),
+      supabase.from('daily_reports').select('*').eq('member_id', m.id)
+        .gte('work_date', from).lt('work_date', to),
+    ])
+    atts.push(...((a as Attendance[]) ?? []))
+    reps.push(...((r as ReportRow[]) ?? []))
+  }
+  const t = (iso?: string | null) => (iso ? new Date(iso).toTimeString().slice(0, 5) : '')
+  const dur = (min: number) => (min > 0 ? hmm(min) : '')
+  const bMin = (b?: Break) =>
+    b?.ended_at ? (new Date(b.ended_at).getTime() - new Date(b.started_at).getTime()) / 60000 : 0
+  const rows = [[
+    '氏名', '日付', '曜日', '出勤', 'ランチ入り', 'ランチ戻り', '退勤',
+    '中抜け開始1', '中抜け戻り1', '中抜け開始2', '中抜け戻り2', '中抜け開始3', '中抜け戻り3',
+    '総時間', '休憩', '中抜け1', '中抜け2', '実労働時間', '業務内容',
+  ]]
+  const days = new Date(y, mo, 0).getDate()
+  for (const m of targets) {
+    for (let d = 1; d <= days; d++) {
+      const date = `${month}-${String(d).padStart(2, '0')}`
+      const dow = '日月火水木金土'[new Date(y, mo - 1, d).getDay()]
+      const a = atts.find((x) => x.member_id === m.id && x.work_date === date)
+      const bs = [...(a?.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
+      const gross = a?.clock_in && a?.clock_out
+        ? (new Date(a.clock_out).getTime() - new Date(a.clock_in).getTime()) / 60000 : 0
+      const allBreaks = bs.reduce((s, b) => s + bMin(b), 0)
+      const rep = reps.find((r) => r.member_id === m.id && r.work_date === date)
+      rows.push([
+        m.name, date, dow,
+        t(a?.clock_in), t(bs[0]?.started_at), t(bs[0]?.ended_at), t(a?.clock_out),
+        t(bs[1]?.started_at), t(bs[1]?.ended_at), t(bs[2]?.started_at), t(bs[2]?.ended_at),
+        t(bs[3]?.started_at), t(bs[3]?.ended_at),
+        dur(gross), dur(bMin(bs[0])), dur(bMin(bs[1])), dur(bMin(bs[2])),
+        dur(Math.max(0, gross - allBreaks)),
+        rep?.body ?? a?.plan ?? '',
+      ])
+    }
+  }
+  const csv = '\uFEFF' + rows
+    .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+    .join('\r\n')
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+  const el = document.createElement('a')
+  el.href = url
+  el.download = `出勤簿_${month}.csv`
+  el.click()
+  URL.revokeObjectURL(url)
+}
+
+const invoiceTotal = (inv: Invoice) =>
+  Math.round((inv.minutes / 60) * inv.hourly_rate) +
+  inv.expenses.reduce((s, e) => s + e.amount, 0)
+
+// 印刷用の請求書ビュー（本人・管理者の両方から使う）
+function InvoiceView({ inv, memberName, onClose }: { inv: Invoice; memberName: string; onClose: () => void }) {
+  const [companyName, setCompanyName] = useState('')
+  useEffect(() => {
+    supabase.from('companies').select('name').limit(1).maybeSingle()
+      .then(({ data }) => setCompanyName((data as { name?: string } | null)?.name ?? ''))
+  }, [])
+  const labor = Math.round((inv.minutes / 60) * inv.hourly_rate)
+  return (
+    <div className="invoice-page">
+      <div className="form-actions no-print" style={{ marginTop: 0 }}>
+        <button className="btn-outline" onClick={onClose}>← 戻る</button>
+        <button className="btn-primary" style={{ margin: 0 }} onClick={() => window.print()}>印刷 / PDF保存</button>
+      </div>
+      <div className="invoice">
+        <h1>請求書</h1>
+        <div className="invoice-head">
+          <div>
+            <div className="invoice-to">{companyName} 御中</div>
+            <div className="invoice-meta">対象期間: {inv.month.replace('-', '年')}月分</div>
+            <div className="invoice-meta">発行日: {new Date(inv.issued_at).toLocaleDateString('ja-JP')}</div>
+          </div>
+          <div className="invoice-from">
+            <div>{memberName}</div>
+            {inv.status === 'paid' && <span className="badge badge-blue">支払済み</span>}
+          </div>
+        </div>
+        <table className="invoice-table">
+          <thead>
+            <tr><th>項目</th><th>数量</th><th>単価</th><th>金額</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>業務委託料（実働 {hmm(inv.minutes)}）</td>
+              <td>{(inv.minutes / 60).toFixed(2)} h</td>
+              <td>{yen(inv.hourly_rate)}</td>
+              <td>{yen(labor)}</td>
+            </tr>
+            {inv.expenses.map((e, i) => (
+              <tr key={i}><td>{e.label}（経費）</td><td>—</td><td>—</td><td>{yen(e.amount)}</td></tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="invoice-total">合計 {yen(invoiceTotal(inv))}</div>
+      </div>
+    </div>
   )
 }
 
@@ -744,15 +1147,24 @@ function Members({ me }: { me: Member }) {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(BLANK_INVITE)
   const [busy, setBusy] = useState(false)
+  const [myhood, setMyhood] = useState('')
+  const [myhoodMsg, setMyhoodMsg] = useState('')
+  const [month, setMonth] = useState(today().slice(0, 7)) // "YYYY-MM"
+  const [invs, setInvs] = useState<Invoice[]>([])
+  const [invView, setInvView] = useState<Invoice | null>(null)
   const isAdmin = me.role === 'admin'
 
   const load = useCallback(async () => {
-    const [{ data: rows }, { data: company }] = await Promise.all([
+    const [{ data: rows }, { data: company }, { data: invRows }] = await Promise.all([
       supabase.from('members').select('*').eq('company_id', me.company_id).order('created_at'),
-      supabase.from('companies').select('join_code').eq('id', me.company_id).maybeSingle(),
+      supabase.from('companies').select('join_code, myhood_url').eq('id', me.company_id).maybeSingle(),
+      supabase.from('invoices').select('*').order('issued_at', { ascending: false }),
     ])
     setMembers(rows ?? [])
     setCode(company?.join_code ?? '')
+    setMyhood((company as { myhood_url?: string | null } | null)?.myhood_url ?? '')
+    const ids = new Set(((rows as Member[]) ?? []).map((m) => m.id))
+    setInvs(((invRows as Invoice[]) ?? []).filter((v) => ids.has(v.member_id)))
   }, [me.company_id])
 
   useEffect(() => { load() }, [load])
@@ -769,11 +1181,33 @@ function Members({ me }: { me: Member }) {
     if (error) setErr('所定時間を変更できませんでした')
   }
 
+  const changeRate = async (m: Member, value: string) => {
+    const rate = Math.max(0, Number(value) || 0)
+    setMembers(members.map((x) => (x.id === m.id ? { ...x, hourly_rate: rate } : x)))
+    const { error } = await supabase.from('members').update({ hourly_rate: rate }).eq('id', m.id)
+    if (error) setErr('時給を変更できませんでした')
+  }
+
+  const markPaid = async (inv: Invoice) => {
+    setErr('')
+    const { error } = await supabase.from('invoices')
+      .update({ status: 'paid', paid_at: new Date().toISOString() }).eq('id', inv.id)
+    if (error) return setErr(`更新できませんでした（${error.message}）`)
+    load()
+  }
+
   const changeRole = async (m: Member, role: Member['role']) => {
     setErr('')
     const { error } = await supabase.from('members').update({ role }).eq('id', m.id)
     if (error) return setErr(error.message)
     load()
+  }
+
+  const saveMyhood = async () => {
+    setMyhoodMsg('')
+    const { error } = await supabase.from('companies')
+      .update({ myhood_url: myhood || null }).eq('id', me.company_id)
+    setMyhoodMsg(error ? '保存できませんでした（管理者のみ変更可能です）' : '保存しました')
   }
 
   const invite = async () => {
@@ -790,24 +1224,21 @@ function Members({ me }: { me: Member }) {
     load()
   }
 
+  if (invView) {
+    return <InvoiceView inv={invView}
+      memberName={members.find((m) => m.id === invView.member_id)?.name ?? ''}
+      onClose={() => setInvView(null)} />
+  }
+
   return (
     <>
-      {isAdmin && (
-        <div className="card">
-          <h2>参加コード <span className="tag">メンバーに共有</span></h2>
-          <div className="join-code-row">
-            <div className="join-code">{code || '—'}</div>
-            <button className="btn-outline" onClick={copyCode}>{copied ? 'コピーしました' : 'コピー'}</button>
-          </div>
-          <div className="notice">
-            このコードを伝えれば、相手が自分でアカウントを作って参加できます。
-            メールアドレスを事前に聞く必要はありません（参加した人は「一般」として追加されます）
-          </div>
-        </div>
-      )}
-
       <div className="card">
-        <h2>メンバー名簿 <span className="tag">{members.length}名</span></h2>
+        <h2>
+          メンバー名簿 <span className="tag">{members.length}名</span>
+          {isAdmin && !open && (
+            <button className="h2-action" onClick={() => setOpen(true)}>＋ 招待</button>
+          )}
+        </h2>
         {members.map((m, i) => (
           <div key={m.id} className="member-row">
             <div className="m-avatar member-av" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
@@ -840,17 +1271,22 @@ function Members({ me }: { me: Member }) {
                 <input type="time" value={hm(m.work_end)} disabled={!isAdmin}
                   onChange={(e) => changeHours(m, 'work_end', e.target.value)} />
               </div>
+              <span className="m-hours-label" style={{ marginTop: 6 }}>時給（0=給与制）</span>
+              <div>
+                <span>¥ </span>
+                <input type="text" inputMode="numeric" className="rate-input"
+                  aria-label={`${m.name}の時給`} value={m.hourly_rate || 0} disabled={!isAdmin}
+                  onChange={(e) => changeRate(m, e.target.value)} />
+              </div>
             </div>
           </div>
         ))}
-        {err && <div className="notice warn">{err}</div>}
-        {isAdmin && !open && (
-          <button className="btn-primary" onClick={() => setOpen(true)}>＋ メンバーを招待</button>
-        )}
+        {err && !open && <div className="notice warn">{err}</div>}
         {isAdmin && (
-          <div className="notice">
-            管理者はメンバーの招待、権限・所定勤務時間帯の変更ができます。
-            会社を管理できなくなるのを防ぐため、実際に参加している管理者が自分だけの間は一般に変更できません
+          <div className="join-code-subtle">
+            参加コード <b>{code || '—'}</b>
+            <button onClick={copyCode}>{copied ? 'コピーしました' : 'コピー'}</button>
+            <span className="join-code-hint">共有すれば相手が自分でアカウントを作って参加できます</span>
           </div>
         )}
       </div>
@@ -879,7 +1315,7 @@ function Members({ me }: { me: Member }) {
           <div className="notice">
             メールアドレスが分かっている人向けです。登録したアドレスでアカウントを作成すると自動で参加し、
             ここで設定した名前と所定勤務時間帯が引き継がれます。
-            アドレスが分からない場合は上の参加コードを共有してください
+            アドレスが分からない場合は名簿の下にある参加コードを共有してください
           </div>
           <div className="form-actions">
             <button className="btn-primary" style={{ margin: 0 }}
@@ -890,7 +1326,153 @@ function Members({ me }: { me: Member }) {
           </div>
         </div>
       )}
+
+      {isAdmin && (
+        <div className="card">
+          <h2>MyHood連携 <span className="tag">管理者設定</span></h2>
+          <label htmlFor="mh-url">MyHoodの投稿先URL</label>
+          <input id="mh-url" type="url" placeholder="https://myhood.example.com/..."
+            value={myhood} onChange={(e) => setMyhood(e.target.value)} />
+          <div className="form-actions">
+            <button className="btn-primary" style={{ margin: 0 }} onClick={saveMyhood}>保存</button>
+          </div>
+          {myhoodMsg && <div className="notice">{myhoodMsg}</div>}
+          <div className="notice">
+            設定すると、日報と今日の予定に「MyHoodに投稿」ボタンが表示され、動画での提出ができるようになります。
+            空にして保存すると連携を解除します
+          </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="card">
+          <h2>出勤簿の出力 <span className="tag">月末のCSV出力</span></h2>
+          <div className="draft-times">
+            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+            <button className="btn-primary" style={{ margin: 0 }}
+              onClick={() => exportKintaiCsv(members, month)}>CSVをダウンロード</button>
+          </div>
+          <div className="notice">
+            全メンバーの1か月分を、現行の出勤簿スプレッドシートと同じ列構成
+            （出勤・ランチ・退勤・中抜け・総時間・実労働時間・業務内容）で出力します
+          </div>
+        </div>
+      )}
+
+      {isAdmin && invs.length > 0 && (
+        <div className="card">
+          <h2>請求書 <span className="tag">メンバーからの請求</span></h2>
+          <div className="list">
+            {invs.map((v) => (
+              <div key={v.id} className="list-item">
+                <div className="when">{v.month.replace('-', '/')}</div>
+                <div className="title">
+                  {members.find((m) => m.id === v.member_id)?.name ?? '—'} · 実働 {hmm(v.minutes)} · {yen(invoiceTotal(v))}
+                </div>
+                <button className="btn-outline" onClick={() => setInvView(v)}>表示</button>
+                {v.status === 'paid' ? (
+                  <span className="badge badge-blue">支払済み</span>
+                ) : (
+                  <button className="btn-primary" style={{ margin: 0 }} onClick={() => markPaid(v)}>支払済みにする</button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </>
+  )
+}
+
+/* ---------- 稼働と請求（プロフィール内・時給が設定されている人だけ） ---------- */
+function MyWork({ me }: { me: Member }) {
+  const [month, setMonth] = useState(today().slice(0, 7))
+  const [minutes, setMinutes] = useState(0)
+  const [inv, setInv] = useState<Invoice | null>(null) // その月の発行済み請求書
+  const [expenses, setExpenses] = useState<{ label: string; amount: number }[]>([])
+  const [expLabel, setExpLabel] = useState('')
+  const [expAmount, setExpAmount] = useState('')
+  const [view, setView] = useState(false)
+  const [err, setErr] = useState('')
+
+  const load = useCallback(async () => {
+    setMinutes(await monthWorkedMinutes(me.id, month))
+    const { data } = await supabase.from('invoices').select('*')
+      .eq('member_id', me.id).eq('month', month).maybeSingle()
+    setInv((data as Invoice | null) ?? null)
+  }, [me.id, month])
+
+  useEffect(() => { load() }, [load])
+
+  const addExpense = () => {
+    const amount = Number(expAmount)
+    if (!expLabel || !amount) return
+    setExpenses([...expenses, { label: expLabel, amount }])
+    setExpLabel(''); setExpAmount('')
+  }
+
+  const issue = async () => {
+    setErr('')
+    const { error } = await supabase.from('invoices').insert({
+      member_id: me.id, month, minutes: Math.round(minutes),
+      hourly_rate: me.hourly_rate, expenses,
+      status: 'issued', issued_at: new Date().toISOString(), paid_at: null,
+    })
+    if (error) return setErr(`発行できませんでした（${error.message}）`)
+    setExpenses([])
+    load()
+    setView(true)
+  }
+
+  const labor = Math.round((minutes / 60) * me.hourly_rate)
+
+  if (view && inv) return <InvoiceView inv={inv} memberName={me.name} onClose={() => setView(false)} />
+
+  return (
+    <div className="card">
+      <h2>稼働と請求 <span className="tag">実働 × 時給で請求書を発行</span></h2>
+      <div className="draft-times">
+        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+        <button className="btn-outline" onClick={() => exportKintaiCsv([me], month)}>稼働表CSV</button>
+      </div>
+      <div className="log-row">
+        <span className="d">実働</span>
+        <span className="t">{hmm(minutes)} × {yen(me.hourly_rate)}</span>
+        <span className="dur">{yen(labor)}</span>
+      </div>
+      {inv ? (
+        <>
+          <div className="notice">
+            この月の請求書は発行済みです（{inv.status === 'paid' ? '支払済み' : '支払待ち'}・合計 {yen(invoiceTotal(inv))}）
+          </div>
+          <button className="btn-primary" onClick={() => setView(true)}>請求書を表示</button>
+        </>
+      ) : (
+        <>
+          {expenses.map((e, i) => (
+            <div key={i} className="log-row">
+              <span className="d">経費</span>
+              <span className="t">{e.label}</span>
+              <span className="dur">{yen(e.amount)}</span>
+            </div>
+          ))}
+          <div className="draft-times" style={{ flexWrap: 'wrap' }}>
+            <input type="text" placeholder="経費の項目（例: 交通費）" style={{ width: 180 }}
+              value={expLabel} onChange={(e) => setExpLabel(e.target.value)} />
+            <input type="text" inputMode="numeric" placeholder="金額" style={{ width: 100 }}
+              value={expAmount} onChange={(e) => setExpAmount(e.target.value)} />
+            <button className="btn-outline" onClick={addExpense}>＋ 経費を追加</button>
+          </div>
+          {err && <div className="notice warn">{err}</div>}
+          <button className="btn-primary" disabled={minutes <= 0} onClick={issue}>
+            請求書を発行（{yen(labor + expenses.reduce((s, e) => s + e.amount, 0))}）
+          </button>
+          <div className="notice">
+            発行すると管理者に届き、確認後に支払済みになります。発行時点の実働と時給で金額が確定します
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -969,6 +1551,8 @@ function Profile({ me, onRename }: { me: Member; onRename: (name: string) => voi
           <div className="notice">所定勤務時間帯の変更は管理者に依頼してください（打刻漏れ時の自動補完に使われます）</div>
         )}
       </div>
+
+      {me.hourly_rate > 0 && <MyWork me={me} />}
 
       <div className="card">
         <h2>外部サービス連携</h2>

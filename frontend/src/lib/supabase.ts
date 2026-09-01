@@ -33,6 +33,19 @@ export type Member = {
   status: 'invited' | 'active' | 'disabled'
   work_start: string // "HH:MM:SS"
   work_end: string
+  hourly_rate: number // 時給（円）。0は給与制＝請求書フロー対象外
+}
+
+export type Invoice = {
+  id: string
+  member_id: string
+  month: string // "YYYY-MM"
+  minutes: number // 発行時の実働合計スナップショット
+  hourly_rate: number
+  expenses: { label: string; amount: number }[]
+  status: 'issued' | 'paid'
+  issued_at: string
+  paid_at: string | null
 }
 
 export type Attendance = {
@@ -44,6 +57,7 @@ export type Attendance = {
   auto_in: boolean
   auto_out: boolean
   plan: string | null
+  plan_video: string | null // 動画提出のファイル名（あれば提出扱い）
   breaks?: Break[]
 }
 
@@ -64,6 +78,9 @@ export type Schedule = {
   ends_at: string
   kind: 'shift' | 'event'
   with_meet: boolean
+  status: 'proposed' | 'confirmed' | 'declined'
+  proposed_by: string | null // 最後に提案した人
+  to_member_id: string | null // 提案の宛先（承認・修正できるのはこの人だけ）
 }
 
 export type Report = {
@@ -71,6 +88,7 @@ export type Report = {
   member_id: string
   work_date: string
   body: string
+  video: string | null // 動画提出のファイル名（あれば提出扱い）
   submitted_at: string
 }
 

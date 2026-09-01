@@ -1,5 +1,5 @@
 // /demo 用のインメモリSupabaseモック。リロードで初期化される
-import type { Attendance, Break, Member, Report, Schedule } from './supabase'
+import type { Attendance, Break, Invoice, Member, Report, Schedule } from './supabase'
 
 export const DEMO = location.pathname.startsWith('/demo')
 
@@ -15,14 +15,14 @@ const at = (date: string, h: number, m = 0) => {
   return d.toISOString()
 }
 
-const COMPANY = { id: 'c1', name: 'ひまわり事務機', icon: '🌻', join_code: 'DEMO01' }
+const COMPANY = { id: 'c1', name: 'ひまわり事務機', icon: '🌻', join_code: 'DEMO01', myhood_url: 'https://myhood.example.com/himawari' }
 
 export const DEMO_MEMBERS: Member[] = [
-  { id: 'm1', company_id: 'c1', user_id: 'u1', name: '高橋 誠', email: 'takahashi@example.com', member_type: 'internal', role: 'admin', status: 'active', work_start: '09:00:00', work_end: '18:00:00' },
-  { id: 'm2', company_id: 'c1', user_id: 'u2', name: '佐藤 美咲', email: 'sato@example.com', member_type: 'internal', role: 'member', status: 'active', work_start: '09:00:00', work_end: '18:00:00' },
-  { id: 'm3', company_id: 'c1', user_id: 'u3', name: '田中 健太', email: 'tanaka@example.com', member_type: 'internal', role: 'member', status: 'active', work_start: '10:00:00', work_end: '19:00:00' },
-  { id: 'm4', company_id: 'c1', user_id: 'u4', name: '鈴木 花子', email: 'suzuki@example.com', member_type: 'external', role: 'member', status: 'active', work_start: '09:30:00', work_end: '16:30:00' },
-  { id: 'm5', company_id: 'c1', user_id: null, name: '山本 大輔', email: 'yamamoto@example.com', member_type: 'internal', role: 'member', status: 'invited', work_start: '09:00:00', work_end: '18:00:00' },
+  { id: 'm1', company_id: 'c1', user_id: 'u1', name: '高橋 誠', email: 'takahashi@example.com', member_type: 'internal', role: 'admin', status: 'active', work_start: '09:00:00', work_end: '18:00:00', hourly_rate: 0 },
+  { id: 'm2', company_id: 'c1', user_id: 'u2', name: '佐藤 美咲', email: 'sato@example.com', member_type: 'internal', role: 'member', status: 'active', work_start: '09:00:00', work_end: '18:00:00', hourly_rate: 1200 },
+  { id: 'm3', company_id: 'c1', user_id: 'u3', name: '田中 健太', email: 'tanaka@example.com', member_type: 'internal', role: 'member', status: 'active', work_start: '10:00:00', work_end: '19:00:00', hourly_rate: 1100 },
+  { id: 'm4', company_id: 'c1', user_id: 'u4', name: '鈴木 花子', email: 'suzuki@example.com', member_type: 'external', role: 'member', status: 'active', work_start: '09:30:00', work_end: '16:30:00', hourly_rate: 1300 },
+  { id: 'm5', company_id: 'c1', user_id: null, name: '山本 大輔', email: 'yamamoto@example.com', member_type: 'internal', role: 'member', status: 'invited', work_start: '09:00:00', work_end: '18:00:00', hourly_rate: 1000 },
 ]
 
 let seq = 0
@@ -42,7 +42,7 @@ for (const [mi, m] of DEMO_MEMBERS.slice(0, 4).entries()) {
       clock_in: at(d, 9 + (mi % 2), (mi * 7) % 30),
       clock_out: at(d, 18, (mi * 11) % 45),
       auto_in: i === 3 && mi === 2, auto_out: false,
-      plan: PLANS[(mi + i) % PLANS.length],
+      plan: PLANS[(mi + i) % PLANS.length], plan_video: null,
     }
     attendances.push(a)
     if (i % 2 === 0) breaks.push({ id: uid(), attendance_id: a.id, started_at: at(d, 12), ended_at: at(d, 13), note: null })
@@ -53,7 +53,7 @@ for (const [mi, m] of DEMO_MEMBERS.slice(0, 3).entries()) {
   const a: Attendance = {
     id: uid(), member_id: m.id, work_date: today(),
     clock_in: at(today(), 9, mi * 5), clock_out: null,
-    auto_in: false, auto_out: false, plan: PLANS[mi],
+    auto_in: false, auto_out: false, plan: PLANS[mi], plan_video: null,
   }
   attendances.push(a)
   if (mi === 2) breaks.push({ id: uid(), attendance_id: a.id, started_at: new Date(Date.now() - 20 * 60000).toISOString(), ended_at: null, note: null })
@@ -63,14 +63,26 @@ const daily_reports: Report[] = DEMO_MEMBERS.slice(0, 4).flatMap((m, mi) =>
   [3, 2, 1].map((i) => ({
     id: uid(), member_id: m.id, work_date: dayOffset(-i),
     body: `${PLANS[(mi + i) % PLANS.length]}を完了。特に問題なし。`,
+    video: null,
     submitted_at: at(dayOffset(-i), 18, 30),
   })))
 
+const ok = { status: 'confirmed', proposed_by: null, to_member_id: null } as const
 const schedules: Schedule[] = [
-  { id: uid(), company_id: 'c1', member_id: 'm1', title: '定例MTG', starts_at: at(today(), 10), ends_at: at(today(), 11), kind: 'event', with_meet: true },
-  { id: uid(), company_id: 'c1', member_id: 'm2', title: '取引先訪問', starts_at: at(today(), 14), ends_at: at(today(), 16), kind: 'event', with_meet: false },
-  { id: uid(), company_id: 'c1', member_id: 'm3', title: '1on1', starts_at: at(dayOffset(1), 15), ends_at: at(dayOffset(1), 15, 30), kind: 'event', with_meet: true },
-  { id: uid(), company_id: 'c1', member_id: 'm1', title: '採用面接', starts_at: at(dayOffset(2), 13), ends_at: at(dayOffset(2), 14), kind: 'event', with_meet: true },
+  { id: uid(), company_id: 'c1', member_id: 'm1', title: '定例MTG', starts_at: at(today(), 10), ends_at: at(today(), 11), kind: 'event', with_meet: true, ...ok },
+  { id: uid(), company_id: 'c1', member_id: 'm2', title: '取引先訪問', starts_at: at(today(), 14), ends_at: at(today(), 16), kind: 'event', with_meet: false, ...ok },
+  { id: uid(), company_id: 'c1', member_id: 'm3', title: '1on1', starts_at: at(dayOffset(1), 15), ends_at: at(dayOffset(1), 15, 30), kind: 'event', with_meet: true, ...ok },
+  { id: uid(), company_id: 'c1', member_id: 'm1', title: '採用面接', starts_at: at(dayOffset(2), 13), ends_at: at(dayOffset(2), 14), kind: 'event', with_meet: true, ...ok },
+  // 佐藤→高橋への提案（承認フローのデモ用）
+  { id: uid(), company_id: 'c1', member_id: 'm2', title: '打ち合わせ', starts_at: at(today(), 15), ends_at: at(today(), 16), kind: 'event', with_meet: true, status: 'proposed', proposed_by: 'm2', to_member_id: 'm1' },
+]
+
+// 鈴木の先月分（支払済み）をシード
+const lastMonth = (() => { const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toLocaleDateString('sv-SE').slice(0, 7) })()
+const invoices: Invoice[] = [
+  { id: uid(), member_id: 'm4', month: lastMonth, minutes: 3840, hourly_rate: 1300,
+    expenses: [{ label: '交通費', amount: 2140 }], status: 'paid',
+    issued_at: at(today(), 9), paid_at: at(today(), 10) },
 ]
 
 const tables: Record<string, Record<string, unknown>[]> = {
@@ -80,6 +92,7 @@ const tables: Record<string, Record<string, unknown>[]> = {
   breaks: breaks as unknown as Record<string, unknown>[],
   daily_reports: daily_reports as unknown as Record<string, unknown>[],
   schedules: schedules as unknown as Record<string, unknown>[],
+  invoices: invoices as unknown as Record<string, unknown>[],
 }
 
 type Row = Record<string, unknown>
@@ -121,6 +134,11 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
       const row: Row = { id: uid(), auto_in: false, auto_out: false, note: null, ...this.op.values }
       if (this.table === 'breaks') row.started_at ??= new Date().toISOString()
       if (this.table === 'breaks') row.ended_at ??= null
+      if (this.table === 'schedules') {
+        row.status ??= 'confirmed'
+        row.proposed_by ??= null
+        row.to_member_id ??= null
+      }
       rows.push(row)
       return { data: row, error: null }
     }
@@ -157,10 +175,22 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
   }
 }
 
+// デモの動画アップロードはブラウザ内のblob URLで代用（リロードで消える）
+const blobUrls: Record<string, string> = {}
+
 // アプリが触るAPI面だけを持つ疑似クライアント
 export const demoClient = {
   from: (table: string) => new Query(table),
   rpc: async () => ({ data: null, error: null }),
+  storage: {
+    from: (_bucket: string) => ({
+      upload: async (path: string, file: File) => {
+        blobUrls[path] = URL.createObjectURL(file)
+        return { data: { path }, error: null }
+      },
+      getPublicUrl: (path: string) => ({ data: { publicUrl: blobUrls[path] ?? '' } }),
+    }),
+  },
   auth: {
     getSession: async () => ({ data: { session: null } }),
     onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
