@@ -812,7 +812,6 @@ function Home({ me }: { me: Member }) {
 /* ---------- 稼働予定表（日報タブ内・自己管理用。月単位で切り替え） ---------- */
 function PlanRows({ me }: { me: Member }) {
   const [rows, setRows] = useState<ReportRow[]>([])
-  const [atts, setAtts] = useState<Attendance[]>([]) // 実稼働（打刻）の記録
   const [month, setMonth] = useState(today().slice(0, 7)) // "YYYY-MM"
   const [err, setErr] = useState('')
   const [savedAt, setSavedAt] = useState('') // 直近保存した行のwork_date（✓表示用）
@@ -827,13 +826,8 @@ function PlanRows({ me }: { me: Member }) {
     const [y, m] = month.split('-').map(Number)
     const from = `${month}-01`
     const to = new Date(y, m, 1).toLocaleDateString('sv-SE').slice(0, 7) + '-01'
-    const [{ data }, { data: a }] = await Promise.all([
-      supabase.from('daily_reports').select('*').eq('member_id', me.id)
-        .gte('work_date', from).lt('work_date', to).order('work_date', { ascending: true }),
-      supabase.from('attendances').select('*, breaks(*)').eq('member_id', me.id)
-        .gte('work_date', from).lt('work_date', to),
-    ])
-    setAtts((a as Attendance[]) ?? [])
+    const { data } = await supabase.from('daily_reports').select('*').eq('member_id', me.id)
+      .gte('work_date', from).lt('work_date', to).order('work_date', { ascending: true })
     const merged = new Map<string, ReportRow>()
     const days = new Date(y, m, 0).getDate()
     for (let d = 1; d <= days; d++) merged.set(`${month}-${String(d).padStart(2, '0')}`, blank(`${month}-${String(d).padStart(2, '0')}`))
@@ -882,15 +876,109 @@ function PlanRows({ me }: { me: Member }) {
     return `${d.slice(5).replace('-', '/')}(${'日月火水木金土'[dt.getDay()]})`
   }
 
-  // ---- 過去日の実績（打刻）を直接編集する ----
+  const [y, m] = month.split('-').map(Number)
+  return (
+    <div className="card">
+      <h2>
+        稼働予定表
+        <span className="month-nav">
+          <button aria-label="前の月" onClick={() => moveMonth(-1)}>◀</button>
+          <b>{y}年{m}月</b>
+          <button aria-label="次の月" onClick={() => moveMonth(1)}>▶</button>
+        </span>
+      </h2>
+      <div className="plan-table-wrap">
+          <table className="plan-table">
+            <thead>
+              <tr><th>日付</th><th>開始</th><th>終了</th><th>やること</th></tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                return (
+                <tr key={r.work_date} className={r.work_date === today() ? 'pt-today' : ''}>
+                  <td className="pt-date">{fmtDate(r.work_date)}
+                    {savedAt === r.work_date && <span className="pt-saved" role="status">✓保存</span>}</td>
+                  {(
+                    <>
+                      <td><input type="text" inputMode="numeric" placeholder="0900" className="pt-time"
+                        aria-label={`${fmtDate(r.work_date)}の稼働予定開始`} value={r.planned_start ?? ''}
+                        onChange={(e) => patch(r.work_date, { planned_start: e.target.value })}
+                        onBlur={(e) => {
+                          const v = normTime(e.target.value)
+                          if (v !== (r.planned_start ?? '')) patch(r.work_date, { planned_start: v })
+                          save({ ...r, planned_start: v })
+                        }} /></td>
+                      <td><input type="text" inputMode="numeric" placeholder="1800" className="pt-time"
+                        aria-label={`${fmtDate(r.work_date)}の稼働予定終了`} value={r.planned_end ?? ''}
+                        onChange={(e) => patch(r.work_date, { planned_end: e.target.value })}
+                        onBlur={(e) => {
+                          const v = normTime(e.target.value)
+                          if (v !== (r.planned_end ?? '')) patch(r.work_date, { planned_end: v })
+                          save({ ...r, planned_end: v })
+                        }} /></td>
+                    </>
+                  )}
+                  <td className="pt-plan"><textarea rows={1} placeholder="やることを自由に記入"
+                    aria-label={`${fmtDate(r.work_date)}のやること`} value={r.plan ?? ''}
+                    onChange={(e) => patch(r.work_date, { plan: e.target.value })}
+                    onBlur={() => save(r)} /></td>
+                </tr>
+              )})}
+            </tbody>
+          </table>
+      </div>
+      {err && <div className="notice warn">{err}</div>}
+    </div>
+  )
+}
+
+/* ---------- 勤怠表（実績の詳細: 出勤・退勤・中抜け・実働・確定） ---------- */
+function KintaiTable({ me }: { me: Member }) {
+  const [atts, setAtts] = useState<Attendance[]>([])
+  const [reps, setReps] = useState<ReportRow[]>([])
+  const [month, setMonth] = useState(today().slice(0, 7))
+  const [err, setErr] = useState('')
+  const [savedAt, setSavedAt] = useState('')
+
+  const load = useCallback(async () => {
+    const [y, m] = month.split('-').map(Number)
+    const from = `${month}-01`
+    const to = new Date(y, m, 1).toLocaleDateString('sv-SE').slice(0, 7) + '-01'
+    const [{ data: a }, { data: r }] = await Promise.all([
+      supabase.from('attendances').select('*, breaks(*)').eq('member_id', me.id)
+        .gte('work_date', from).lt('work_date', to).order('work_date', { ascending: true }),
+      supabase.from('daily_reports').select('*').eq('member_id', me.id)
+        .gte('work_date', from).lt('work_date', to),
+    ])
+    setAtts((a as Attendance[]) ?? [])
+    setReps((r as ReportRow[]) ?? [])
+  }, [me.id, month])
+  useEffect(() => { load() }, [load])
+
+  const moveMonth = (delta: number) => {
+    const [y, m] = month.split('-').map(Number)
+    setMonth(new Date(y, m - 1 + delta, 1).toLocaleDateString('sv-SE').slice(0, 7))
+  }
+
+  const normTime = (v: string) => {
+    const d = v.replace(/[^0-9]/g, '')
+    if (!d) return ''
+    const [h, m] = d.length <= 2 ? [+d, 0] : [+d.slice(0, -2), +d.slice(-2)]
+    if (h > 23 || m > 59) return ''
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  }
+  const fmtDate = (d: string) => {
+    const dt = new Date(d + 'T00:00')
+    return `${d.slice(5).replace('-', '/')}(${'日月火水木金土'[dt.getDay()]})`
+  }
   const toIso = (date: string, hmStr: string) => new Date(`${date}T${hmStr}:00`).toISOString()
   const flash = (date: string) => {
     setSavedAt(date)
     setTimeout(() => setSavedAt((s) => (s === date ? '' : s)), 1500)
   }
-  // 開始/終了の修正。手で直したら自動補完フラグは下ろす
+  // 出勤/退勤の修正。手で直したら自動補完フラグは下ろす
   const saveActual = async (date: string, field: 'clock_in' | 'clock_out', v: string) => {
-    if (!v) return load() // 空は無視して表示を戻す
+    if (!v) return load()
     setErr('')
     const { error } = await supabase.from('attendances').upsert(
       { member_id: me.id, work_date: date, [field]: toIso(date, v),
@@ -901,8 +989,8 @@ function PlanRows({ me }: { me: Member }) {
     flash(date)
     load()
   }
-  const fmtBreaks = (a?: Attendance) =>
-    [...(a?.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
+  const fmtBreaks = (a: Attendance) =>
+    [...(a.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
       .map((b) => `${fmtTime(b.started_at)}–${b.ended_at ? fmtTime(b.ended_at) : ''}`).join(', ')
   // 「1200-1300, 1500-1515」形式をパースしてその日のbreaksを入れ替える
   const saveBreaks = async (a: Attendance, text: string) => {
@@ -923,104 +1011,84 @@ function PlanRows({ me }: { me: Member }) {
     flash(a.work_date)
     load()
   }
+  const toggleConfirm = async (a: Attendance) => {
+    const rep = reps.find((r) => r.work_date === a.work_date)
+    setErr('')
+    const { error } = await supabase.from('daily_reports').upsert(
+      { member_id: me.id, work_date: a.work_date, confirmed: !(rep?.confirmed ?? false) },
+      { onConflict: 'member_id,work_date' },
+    )
+    if (error) return setErr(`確定できませんでした（${error.message}）`)
+    flash(a.work_date)
+    load()
+  }
 
   const [y, m] = month.split('-').map(Number)
+  const days = atts.filter((a) => a.clock_in)
   return (
     <div className="card">
       <h2>
-        稼働予定表
+        勤怠表 <span className="tag">実績の詳細</span>
         <span className="month-nav">
-          <button aria-label="前の月" onClick={() => moveMonth(-1)}>◀</button>
+          <button aria-label="勤怠表の前の月" onClick={() => moveMonth(-1)}>◀</button>
           <b>{y}年{m}月</b>
-          <button aria-label="次の月" onClick={() => moveMonth(1)}>▶</button>
+          <button aria-label="勤怠表の次の月" onClick={() => moveMonth(1)}>▶</button>
         </span>
       </h2>
-      <div className="plan-table-wrap">
+      {days.length === 0 ? <div className="empty">この月の勤怠記録はありません</div> : (
+        <div className="plan-table-wrap">
           <table className="plan-table">
             <thead>
-              <tr><th>日付</th><th>開始</th><th>終了</th><th>中抜け</th><th>やること</th></tr>
+              <tr><th>日付</th><th>出勤</th><th>退勤</th><th>中抜け</th><th>実働</th><th></th></tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
-                const a = atts.find((x) => x.work_date === r.work_date)
-                const isPast = r.work_date < today()
+              {days.map((a) => {
+                const confirmed = reps.find((r) => r.work_date === a.work_date)?.confirmed ?? false
                 return (
-                <tr key={r.work_date} className={r.work_date === today() ? 'pt-today' : ''}>
-                  <td className="pt-date">{fmtDate(r.work_date)}
-                    {a?.clock_out && (
-                      // 確定は自動ではなく本人がボタンで固定する。押すまではいつでも編集可
-                      <button className={`pt-fix-btn ${r.confirmed ? 'on' : ''}`}
-                        aria-pressed={r.confirmed ?? false}
-                        onClick={() => { dirty.current.add(r.work_date); const nr = { ...r, confirmed: !r.confirmed }; patch(r.work_date, { confirmed: nr.confirmed }); save(nr) }}>
-                        {r.confirmed ? '確定済' : '確定'}
-                      </button>
+                  <tr key={a.id} className={a.work_date === today() ? 'pt-today' : ''}>
+                    <td className="pt-date">{fmtDate(a.work_date)}
+                      {(a.auto_in || a.auto_out) && <span className="badge badge-yellow">⚠ 自動補完</span>}
+                      {savedAt === a.work_date && <span className="pt-saved" role="status">✓保存</span>}</td>
+                    {confirmed ? (
+                      <>
+                        <td className="pt-time pt-done">{fmtTime(a.clock_in)}</td>
+                        <td className="pt-time pt-done">{a.clock_out ? fmtTime(a.clock_out) : ''}</td>
+                        <td className="pt-time pt-done">{fmtBreaks(a)}</td>
+                      </>
+                    ) : (
+                      <>
+                        <td><input type="text" inputMode="numeric" className="pt-time" placeholder="0900"
+                          key={`in-${a.id}-${a.clock_in ?? ''}`} aria-label={`${fmtDate(a.work_date)}の出勤`}
+                          defaultValue={a.clock_in ? fmtTime(a.clock_in) : ''}
+                          onBlur={(e) => {
+                            const v = normTime(e.target.value)
+                            if (v !== (a.clock_in ? fmtTime(a.clock_in) : '')) saveActual(a.work_date, 'clock_in', v)
+                          }} /></td>
+                        <td><input type="text" inputMode="numeric" className="pt-time" placeholder="1800"
+                          key={`out-${a.id}-${a.clock_out ?? ''}`} aria-label={`${fmtDate(a.work_date)}の退勤`}
+                          defaultValue={a.clock_out ? fmtTime(a.clock_out) : ''}
+                          onBlur={(e) => {
+                            const v = normTime(e.target.value)
+                            if (v !== (a.clock_out ? fmtTime(a.clock_out) : '')) saveActual(a.work_date, 'clock_out', v)
+                          }} /></td>
+                        <td className="pt-breaks"><input type="text" inputMode="numeric" placeholder="1200-1300"
+                          key={`br-${a.id}-${fmtBreaks(a)}`} aria-label={`${fmtDate(a.work_date)}の中抜け（1200-1300形式）`}
+                          defaultValue={fmtBreaks(a)}
+                          onBlur={(e) => { if (e.target.value.trim() !== fmtBreaks(a)) saveBreaks(a, e.target.value) }} /></td>
+                      </>
                     )}
-                    {savedAt === r.work_date && <span className="pt-saved" role="status">✓保存</span>}</td>
-                  {r.confirmed ? (
-                    // 稼働が終わった日は予定ではなく実際の打刻時刻で確定表示（編集はホームの打刻修正から）
-                    <>
-                      <td className="pt-time pt-done">{a?.clock_in ? fmtTime(a.clock_in) : (r.planned_start ?? '')}</td>
-                      <td className="pt-time pt-done">{a?.clock_out ? fmtTime(a.clock_out) : (r.planned_end ?? '')}</td>
-                      <td className="pt-time pt-done">{fmtBreaks(a)}</td>
-                    </>
-                  ) : isPast ? (
-                    // 過去日は予定ではなく実績（打刻）を直接編集する
-                    <>
-                      <td><input type="text" inputMode="numeric" className="pt-time" placeholder="0900"
-                        key={`in-${r.work_date}-${a?.clock_in ?? ''}`}
-                        aria-label={`${fmtDate(r.work_date)}の実績開始`}
-                        defaultValue={a?.clock_in ? fmtTime(a.clock_in) : ''}
-                        onBlur={(e) => {
-                          const v = normTime(e.target.value)
-                          if (v !== (a?.clock_in ? fmtTime(a.clock_in) : '')) saveActual(r.work_date, 'clock_in', v)
-                        }} /></td>
-                      <td><input type="text" inputMode="numeric" className="pt-time" placeholder="1800"
-                        key={`out-${r.work_date}-${a?.clock_out ?? ''}`}
-                        aria-label={`${fmtDate(r.work_date)}の実績終了`}
-                        defaultValue={a?.clock_out ? fmtTime(a.clock_out) : ''}
-                        onBlur={(e) => {
-                          const v = normTime(e.target.value)
-                          if (v !== (a?.clock_out ? fmtTime(a.clock_out) : '')) saveActual(r.work_date, 'clock_out', v)
-                        }} /></td>
-                      <td className="pt-breaks"><input type="text" inputMode="numeric" placeholder="1200-1300"
-                        key={`br-${r.work_date}-${fmtBreaks(a)}`} disabled={!a}
-                        aria-label={`${fmtDate(r.work_date)}の中抜け（1200-1300形式）`}
-                        defaultValue={fmtBreaks(a)}
-                        onBlur={(e) => {
-                          if (a && e.target.value.trim() !== fmtBreaks(a)) saveBreaks(a, e.target.value)
-                        }} /></td>
-                    </>
-                  ) : (
-                    <>
-                      <td><input type="text" inputMode="numeric"
-                        placeholder={a?.clock_in ? fmtTime(a.clock_in) : '0900'} className="pt-time"
-                        aria-label={`${fmtDate(r.work_date)}の稼働予定開始`} value={r.planned_start ?? ''}
-                        onChange={(e) => patch(r.work_date, { planned_start: e.target.value })}
-                        onBlur={(e) => {
-                          const v = normTime(e.target.value)
-                          if (v !== (r.planned_start ?? '')) patch(r.work_date, { planned_start: v })
-                          save({ ...r, planned_start: v })
-                        }} /></td>
-                      <td><input type="text" inputMode="numeric" placeholder="1800" className="pt-time"
-                        aria-label={`${fmtDate(r.work_date)}の稼働予定終了`} value={r.planned_end ?? ''}
-                        onChange={(e) => patch(r.work_date, { planned_end: e.target.value })}
-                        onBlur={(e) => {
-                          const v = normTime(e.target.value)
-                          if (v !== (r.planned_end ?? '')) patch(r.work_date, { planned_end: v })
-                          save({ ...r, planned_end: v })
-                        }} /></td>
-                      <td className="pt-breaks pt-breaks-ro">{fmtBreaks(a)}</td>
-                    </>
-                  )}
-                  <td className="pt-plan"><textarea rows={1} placeholder="やることを自由に記入"
-                    aria-label={`${fmtDate(r.work_date)}のやること`} value={r.plan ?? ''}
-                    onChange={(e) => patch(r.work_date, { plan: e.target.value })}
-                    onBlur={() => save(r)} /></td>
-                </tr>
-              )})}
+                    <td className="pt-time pt-worked-cell">{a.clock_out ? workedLabel(a) : '勤務中'}</td>
+                    <td>{a.clock_out && (
+                      <button className={`pt-fix-btn ${confirmed ? 'on' : ''}`} aria-pressed={confirmed}
+                        onClick={() => toggleConfirm(a)}>{confirmed ? '確定済' : '確定'}</button>
+                    )}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
-      </div>
+        </div>
+      )}
       {err && <div className="notice warn">{err}</div>}
     </div>
   )
@@ -1073,6 +1141,7 @@ function Report({ me }: { me: Member }) {
   return (
     <>
       <PlanRows me={me} />
+      <KintaiTable me={me} />
       {!showReports && (
         <button className="btn-outline" style={{ margin: '0 auto', display: 'block' }}
           onClick={() => setShowReports(true)}>日報を書く・過去の日報を見る</button>
