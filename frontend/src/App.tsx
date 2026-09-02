@@ -2411,6 +2411,8 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
   const [newTitle, setNewTitle] = useState('')
   const [err, setErr] = useState('')
   const [saved, setSaved] = useState(false)
+  const composing = useRef(false) // IME変換中はEnterで追加しない
+  const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('next_actions').select('*')
@@ -2440,7 +2442,23 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
     const p = { due_date: due || null }
     patch(r.id, p); save(r.id, p)
   }
-  const saveTitle = (r: NextAction) => { if (r.title.trim()) save(r.id, { title: r.title.trim() }) }
+  // 内容・メモは入力停止後に自動保存（モバイルではblurが起きないままタブ移動しがちなため）
+  const patchText = (r: NextAction, field: 'title' | 'note', value: string) => {
+    patch(r.id, { [field]: value })
+    const key = `${r.id}:${field}`
+    clearTimeout(timers.current[key])
+    timers.current[key] = setTimeout(() => {
+      if (field === 'title' && !value.trim()) return
+      save(r.id, { [field]: field === 'title' ? value.trim() : value || null })
+    }, 800)
+  }
+  const flushText = (r: NextAction, field: 'title' | 'note') => {
+    const key = `${r.id}:${field}`
+    clearTimeout(timers.current[key])
+    const value = field === 'title' ? r.title : (r.note ?? '')
+    if (field === 'title' && !value.trim()) return
+    save(r.id, { [field]: field === 'title' ? value.trim() : value || null })
+  }
 
   const add = async () => {
     const title = newTitle.trim()
@@ -2448,7 +2466,7 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
     setErr('')
     const { error } = await supabase.from('next_actions').insert({
       company_id: member.company_id, member_id: member.id,
-      title, status: 'todo', due_date: null, done_at: null,
+      title, status: 'todo', due_date: null, note: null, done_at: null,
       created_at: new Date().toISOString(),
     })
     if (error) return setErr(`追加できませんでした（${error.message}）`)
@@ -2477,14 +2495,31 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
         <div className="plan-table-wrap">
           <table className="plan-table na-table">
             <colgroup>
-              <col className="na-col-status" /><col /><col className="na-col-due" />
+              <col className="na-col-due" /><col /><col className="na-col-status" /><col className="na-col-note" />
             </colgroup>
             <thead>
-              <tr><th>ステータス</th><th>内容</th><th>期日</th></tr>
+              <tr><th>期日</th><th>内容</th><th>ステータス</th><th>メモ</th></tr>
             </thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id} className={r.status === 'done' ? 'na-done' : ''}>
+                  <td className="na-due">
+                    {isSelf ? (
+                      <input type="date" value={r.due_date ?? ''} aria-label="期日"
+                        onChange={(e) => changeDue(r, e.target.value)} />
+                    ) : (r.due_date ? fmtMd(r.due_date) : '—')}
+                  </td>
+                  <td className="na-title">
+                    {isSelf ? (
+                      <div className="na-title-wrap">
+                        <input type="text" value={r.title} aria-label="内容"
+                          onChange={(e) => patchText(r, 'title', e.target.value)}
+                          onBlur={() => flushText(r, 'title')} />
+                        <button className="pt-break-del na-del" aria-label={`${r.title}を削除`}
+                          onClick={() => remove(r)}>×</button>
+                      </div>
+                    ) : r.title}
+                  </td>
                   <td>
                     {isSelf ? (
                       <select className={`na-status na-${r.status}`} value={r.status} aria-label={`${r.title}のステータス`}
@@ -2499,22 +2534,12 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
                       </span>
                     )}
                   </td>
-                  <td className="na-title">
+                  <td className="na-note">
                     {isSelf ? (
-                      <div className="na-title-wrap">
-                        <input type="text" value={r.title} aria-label="内容"
-                          onChange={(e) => patch(r.id, { title: e.target.value })}
-                          onBlur={() => saveTitle(r)} />
-                        <button className="pt-break-del na-del" aria-label={`${r.title}を削除`}
-                          onClick={() => remove(r)}>×</button>
-                      </div>
-                    ) : r.title}
-                  </td>
-                  <td className="na-due">
-                    {isSelf ? (
-                      <input type="date" value={r.due_date ?? ''} aria-label="期日"
-                        onChange={(e) => changeDue(r, e.target.value)} />
-                    ) : (r.due_date ? fmtMd(r.due_date) : '—')}
+                      <input type="text" value={r.note ?? ''} aria-label="メモ" placeholder="メモ"
+                        onChange={(e) => patchText(r, 'note', e.target.value)}
+                        onBlur={() => flushText(r, 'note')} />
+                    ) : (r.note ?? '')}
                   </td>
                 </tr>
               ))}
@@ -2525,10 +2550,13 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
       {isSelf && (
         <>
           <div className="draft-times">
-            <input type="text" placeholder="＋ やることを追加（Enterで確定）" style={{ flex: 1 }}
+            <input type="text" placeholder="やることを追加" style={{ flex: 1 }}
               value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
-              // 日本語入力の変換確定Enterでは追加しない（isComposing対策。Safariはconfirm時にkeyCode 229）
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) add() }} />
+              onCompositionStart={() => { composing.current = true }}
+              onCompositionEnd={() => { composing.current = false }}
+              // 日本語入力の変換確定Enterでは追加しない
+              onKeyDown={(e) => { if (e.key === 'Enter' && !composing.current && !e.nativeEvent.isComposing) add() }} />
+            <button className="btn-primary" style={{ margin: 0 }} disabled={!newTitle.trim()} onClick={add}>追加</button>
           </div>
           <div className="notice">目標とは別の、直近のやることリストです。稼働表とは連動しません</div>
         </>

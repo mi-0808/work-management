@@ -121,10 +121,10 @@ const goals: Goal[] = [
     self_review: '予定通り完了。重複データの削除も併せて実施した。', reviewed_at: at(dayOffset(-3), 18), created_at: at(dayOffset(-8), 9) },
 ]
 const next_actions: NextAction[] = [
-  { id: uid(), company_id: 'c1', member_id: 'm2', title: '現行フローの棚卸し', status: 'done', due_date: dayOffset(-7), done_at: at(dayOffset(-7), 17), created_at: at(dayOffset(-10), 9) },
-  { id: uid(), company_id: 'c1', member_id: 'm2', title: 'テンプレートの下書きを作る', status: 'doing', due_date: dayOffset(2), done_at: null, created_at: at(dayOffset(-9), 9) },
-  { id: uid(), company_id: 'c1', member_id: 'm2', title: '経理に確認を取る', status: 'todo', due_date: null, done_at: null, created_at: at(dayOffset(-9), 9) },
-  { id: uid(), company_id: 'c1', member_id: 'm1', title: '上期の実績を集計する', status: 'doing', due_date: dayOffset(5), done_at: null, created_at: at(dayOffset(-20), 9) },
+  { id: uid(), company_id: 'c1', member_id: 'm2', title: '現行フローの棚卸し', status: 'done', note: '結果はスプレッドシート参照', due_date: dayOffset(-7), done_at: at(dayOffset(-7), 17), created_at: at(dayOffset(-10), 9) },
+  { id: uid(), company_id: 'c1', member_id: 'm2', title: 'テンプレートの下書きを作る', status: 'doing', note: null, due_date: dayOffset(2), done_at: null, created_at: at(dayOffset(-9), 9) },
+  { id: uid(), company_id: 'c1', member_id: 'm2', title: '経理に確認を取る', status: 'todo', note: '月次締めの後で', due_date: null, done_at: null, created_at: at(dayOffset(-9), 9) },
+  { id: uid(), company_id: 'c1', member_id: 'm1', title: '上期の実績を集計する', status: 'doing', note: null, due_date: dayOffset(5), done_at: null, created_at: at(dayOffset(-20), 9) },
 ]
 const goal_evaluations: GoalEvaluation[] = [
   { id: uid(), goal_id: goals[3].id, evaluator_member_id: 'm1', rating: 5,

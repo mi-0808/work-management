@@ -121,6 +121,7 @@ export type NextAction = {
   title: string
   status: 'todo' | 'doing' | 'done' // 未着手・進行中・完了
   due_date: string | null
+  note: string | null
   done_at: string | null
   created_at: string
 }
