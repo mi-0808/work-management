@@ -88,16 +88,17 @@ const MeetBadge = ({ e }: { e: ScheduleRow }) => !e.with_meet ? null : e.meet_ur
   ? <a className="badge badge-blue" href={e.meet_url} target="_blank" rel="noreferrer">Meet</a>
   : <span className="badge badge-blue">Meet</span>
 
-// DayDeedのブランドマーク: DとDが編み込まれるモノグラム(ダーク角丸バッジ)
+// DayDeedのブランドマーク: 編み込まれるDD+青の打刻点(ダーク角丸バッジ)
 const DayDeedLogo = ({ size = 34 }: { size?: number }) => (
   <svg viewBox="0 0 360 360" width={size} height={size} fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <rect width="360" height="360" rx="84" fill="#0B0D0C" />
-    <g transform="translate(180 180) scale(0.82) translate(-190 -160)">
+    <rect width="360" height="360" rx="84" fill="#12211D" />
+    <g transform="translate(180 180) scale(0.76) translate(-190 -160)">
       <path d="M 64 70 L 64 250" stroke="#FFFFFF" strokeWidth="34" />
       <path d="M 64 70 C 156 70, 208 108, 208 160 C 208 212, 156 250, 64 250" stroke="#FFFFFF" strokeWidth="34" />
       <path d="M 172 70 L 172 250" stroke="#63E6BD" strokeWidth="34" />
       <path d="M 172 70 C 264 70, 316 108, 316 160 C 316 212, 264 250, 172 250" stroke="#63E6BD" strokeWidth="34" />
       <path d="M 140 71 C 168 73, 190 84, 202 106" stroke="#FFFFFF" strokeWidth="34" />
+      <circle cx="244" cy="160" r="20" fill="#6FA0F2" />
     </g>
   </svg>
 )
@@ -201,7 +202,7 @@ function Auth() {
     <div className="auth">
       <div className="card">
         <div className="brand" style={{ justifyContent: 'center', marginBottom: 4 }}>
-          <DayDeedLogo />DayDeed
+          <DayDeedLogo /><span>Day<span style={{ color: '#0e9f78' }}>Deed</span></span>
         </div>
         <p className="auth-lead">
           {mode === 'signin' ? 'アカウントにログイン'
