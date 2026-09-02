@@ -71,6 +71,38 @@ function useMyhood(companyId: string) {
 }
 
 /* ---------- 認証 ---------- */
+// カレンダー同期用にrefresh_tokenが必要なので、offline + consent + カレンダーscopeを常に要求
+const googleOAuthOptions = {
+  redirectTo: location.origin,
+  scopes: 'https://www.googleapis.com/auth/calendar.events',
+  queryParams: { access_type: 'offline', prompt: 'consent' },
+}
+
+// 予定をGoogleカレンダーへ同期（fire-and-forget。失敗しても予定保存は成立している）
+const gcalSync = (schedule_id: string, action: 'upsert' | 'delete' = 'upsert') => {
+  supabase.functions.invoke('gcal-sync', { body: { schedule_id, action } }).catch(() => {})
+}
+
+// Meetバッジ。同期済みでリンクがあればそのまま参加できる
+const MeetBadge = ({ e }: { e: ScheduleRow }) => !e.with_meet ? null : e.meet_url
+  ? <a className="badge badge-blue" href={e.meet_url} target="_blank" rel="noreferrer">Meet</a>
+  : <span className="badge badge-blue">Meet</span>
+
+// DayDeedのブランドマーク: 編み込まれるDD+青の打刻点(ダーク角丸バッジ)
+const DayDeedLogo = ({ size = 34 }: { size?: number }) => (
+  <svg viewBox="0 0 360 360" width={size} height={size} fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect width="360" height="360" rx="84" fill="#12211D" />
+    <g transform="translate(180 180) scale(0.76) translate(-190 -160)">
+      <path d="M 64 70 L 64 250" stroke="#FFFFFF" strokeWidth="34" />
+      <path d="M 64 70 C 156 70, 208 108, 208 160 C 208 212, 156 250, 64 250" stroke="#FFFFFF" strokeWidth="34" />
+      <path d="M 172 70 L 172 250" stroke="#63E6BD" strokeWidth="34" />
+      <path d="M 172 70 C 264 70, 316 108, 316 160 C 316 212, 264 250, 172 250" stroke="#63E6BD" strokeWidth="34" />
+      <path d="M 140 71 C 168 73, 190 84, 202 106" stroke="#FFFFFF" strokeWidth="34" />
+      <circle cx="244" cy="160" r="20" fill="#6FA0F2" />
+    </g>
+  </svg>
+)
+
 const GoogleLogo = () => (
   <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden>
     <path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.7-.4-4H24v7.3h12.1c-.2 2-1.6 5-4.5 7l6.9 5.3c4.1-3.8 6.6-9.4 6.6-15.6z" />
@@ -126,7 +158,7 @@ function Auth() {
     setErr('')
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: location.origin },
+      options: googleOAuthOptions,
     })
     if (error) setErr(authError(error.message))
   }
@@ -170,7 +202,7 @@ function Auth() {
     <div className="auth">
       <div className="card">
         <div className="brand" style={{ justifyContent: 'center', marginBottom: 4 }}>
-          <span className="brand-mark">勤</span>Kintai
+          <DayDeedLogo /><span>Day<span style={{ color: '#0e9f78' }}>Deed</span></span>
         </div>
         <p className="auth-lead">
           {mode === 'signin' ? 'アカウントにログイン'
@@ -378,7 +410,7 @@ function TodayMeetings({ me }: { me: Member }) {
             <div key={e.id} className="list-item">
               <div className="when">{hm2(e.starts_at)}–{hm2(e.ends_at)}</div>
               <div className="title">{e.title}</div>
-              {e.with_meet && <span className="badge badge-blue">Meet</span>}
+              <MeetBadge e={e} />
             </div>
           ))}
         </div>
@@ -449,7 +481,7 @@ function WeekPlan({ me }: { me: Member }) {
           <div key={e.id} className="wd-row">
             <b>{hm2(e.starts_at)}–{hm2(e.ends_at)}</b>
             <span>{e.title}</span>
-            {e.with_meet && <span className="badge badge-blue">Meet</span>}
+            <MeetBadge e={e} />
           </div>
         ))}
         {selDay.meetings.length === 0 && <div className="wd-row empty-inline">ミーティングはありません</div>}
@@ -1277,12 +1309,14 @@ function Schedule({ me }: { me: Member }) {
     if (!draft) return
     const mk = (t: string) => new Date(year, month, selDay, ...t.split(':').map(Number) as [number, number]).toISOString()
     setErr('')
-    const { error } = await supabase.from('schedules').insert({
+    const { data: created, error } = await supabase.from('schedules').insert({
       company_id: me.company_id, member_id: me.id, title,
       starts_at: mk(draft.start), ends_at: mk(draft.end), with_meet: meet,
       ...(proposeTo ? { status: 'proposed', proposed_by: me.id, to_member_id: proposeTo } : {}),
-    })
+    }).select('id').single()
     if (error) return setErr(`予定を保存できませんでした（${error.message}）`)
+    if (!proposeTo && created) gcalSync(created.id) // 提案は承認された時点で同期する
+
     setDraft(null); setTitle(''); setMeet(true); setProposeTo('')
     load()
   }
@@ -1298,6 +1332,8 @@ function Schedule({ me }: { me: Member }) {
     setErr('')
     const { error } = await supabase.from('schedules').update(patch).eq('id', e.id)
     if (error) return setErr(`更新できませんでした（${error.message}）`)
+    if (patch.status === 'confirmed') gcalSync(e.id)
+    if (patch.status === 'declined') gcalSync(e.id, 'delete')
     setEditProp(null)
     load()
   }
@@ -1363,7 +1399,10 @@ function Schedule({ me }: { me: Member }) {
             <div key={e.id}
               className={`tl-block ${isMine(e) ? 'me' : 'boss'} ${e.status === 'proposed' ? 'proposed' : ''}`}
               style={block(evStart(e), evEnd(e))} onPointerDown={(ev) => ev.stopPropagation()}>
-              <b>{e.title}</b> {evStart(e)}–{evEnd(e)}{e.with_meet && ' · Meet'}
+              <b>{e.title}</b> {evStart(e)}–{evEnd(e)}
+              {e.with_meet && (e.meet_url
+                ? <> · <a href={e.meet_url} target="_blank" rel="noreferrer">Meet</a></>
+                : ' · Meet')}
               {e.status === 'proposed' && '（提案中）'}
             </div>
           ))}
@@ -1981,7 +2020,7 @@ function Profile({ me, onRename }: { me: Member; onRename: (name: string) => voi
   const linkGoogle = async () => {
     setErr('')
     const { error } = await supabase.auth.linkIdentity({
-      provider: 'google', options: { redirectTo: location.origin },
+      provider: 'google', options: googleOAuthOptions,
     })
     if (error) setErr(authError(error.message))
   }
@@ -2195,6 +2234,12 @@ function App() {
     })
     const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
       if (event === 'PASSWORD_RECOVERY') setRecovering(true)
+      // OAuth直後にしか渡ってこないrefresh_tokenを保存（カレンダー同期用）
+      if (s?.provider_refresh_token) {
+        supabase.from('google_tokens')
+          .upsert({ user_id: s.user.id, refresh_token: s.provider_refresh_token, updated_at: new Date().toISOString() })
+          .then(() => {})
+      }
       setSession(s)
       loadMe(s)
     })
@@ -2206,8 +2251,8 @@ function App() {
       <header className="header" style={{ visibility: me ? 'visible' : 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <button className="brand" onClick={() => setTab('home')}>
-            <span className="brand-mark">{company?.icon ?? '勤'}</span>
-            {company?.name ?? 'Kintai'}
+            {company?.icon ? <span className="brand-mark">{company.icon}</span> : <DayDeedLogo />}
+            {company?.name ?? 'DayDeed'}
           </button>
           {me?.role === 'admin' && company && (
             <button className="brand-edit" title="会社名・アイコンを変更" onClick={editBrand}>✎</button>

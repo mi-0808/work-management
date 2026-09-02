@@ -207,6 +207,7 @@ const blobUrls: Record<string, string> = {}
 export const demoClient = {
   from: (table: string) => new Query(table),
   rpc: async () => ({ data: null, error: null }),
+  functions: { invoke: async () => ({ data: null, error: null }) },
   storage: {
     from: (_bucket: string) => ({
       upload: async (path: string, file: File) => {
