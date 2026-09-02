@@ -2505,8 +2505,12 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
                 <tr key={r.id} className={r.status === 'done' ? 'na-done' : ''}>
                   <td className="na-due">
                     {isSelf ? (
-                      <input type="date" value={r.due_date ?? ''} aria-label="期日"
-                        onChange={(e) => changeDue(r, e.target.value)} />
+                      // 表示は月/日だけにして、タップで下の透明なdate入力のピッカーを開く
+                      <label className="na-due-edit">
+                        <span>{r.due_date ? fmtMd(r.due_date) : '—'}</span>
+                        <input type="date" value={r.due_date ?? ''} aria-label="期日"
+                          onChange={(e) => changeDue(r, e.target.value)} />
+                      </label>
                     ) : (r.due_date ? fmtMd(r.due_date) : '—')}
                   </td>
                   <td className="na-title">

@@ -695,15 +695,15 @@ tr:last-child td { border-bottom: none; }
 .na-done .na-title input, .na-done .na-title { text-decoration: line-through; color: var(--muted); }
 
 /* ネクストアクション: 削除は内容セル内に重ねる（ホバーで表示、タッチでは常時） */
-.na-table col.na-col-status { width: 112px; }
-.na-table col.na-col-due { width: 148px; }
+.na-table col.na-col-status { width: 104px; }
+.na-table col.na-col-due { width: 64px; }
 .na-title-wrap { display: flex; align-items: center; }
 .na-title-wrap .na-del { opacity: 0; transition: opacity .12s; flex: none; }
 .na-table tr:hover .na-del, .na-title-wrap:focus-within .na-del { opacity: 1; }
 @media (hover: none) { .na-title-wrap .na-del { opacity: .6; } }
 
 /* ネクストアクション: メモ列とモバイル横スクロール */
-.na-table { min-width: 560px; }
+.na-table { min-width: 480px; }
 .na-table col.na-col-note { width: 26%; }
 .na-table .na-note input {
   border: none; background: none; border-radius: 8px; width: 100%;
@@ -712,3 +712,16 @@ tr:last-child td { border-bottom: none; }
 .na-table .na-note input::placeholder { color: var(--text-faint); }
 .na-table .na-note input:hover { background: var(--surface-2); }
 .na-table .na-note input:focus { outline: 2px solid var(--accent); outline-offset: -2px; background: #fff; color: var(--ink); }
+
+/* 期日はM/D表示、タップで透明なdate入力のピッカーを開く */
+.na-due-edit {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  min-height: 36px; border-radius: 8px; cursor: pointer;
+  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--ink);
+}
+.na-due-edit:hover { background: var(--surface-2); }
+.na-due-edit input {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; border: none; padding: 0; cursor: pointer;
+}
+.na-table .na-due { text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; }
