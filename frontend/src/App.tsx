@@ -88,6 +88,22 @@ const MeetBadge = ({ e }: { e: ScheduleRow }) => !e.with_meet ? null : e.meet_ur
   ? <a className="badge badge-blue" href={e.meet_url} target="_blank" rel="noreferrer">Meet</a>
   : <span className="badge badge-blue">Meet</span>
 
+// DayDeedのブランドマーク(波→道→輪)。ヘッダーやログイン画面で使う
+const DayDeedLogo = ({ size = 34 }: { size?: number }) => (
+  <svg viewBox="0 0 320 320" width={size} height={size} fill="none" strokeLinecap="round" aria-hidden>
+    <circle cx="160" cy="160" r="160" fill="#0B0D0C" />
+    <g transform="translate(160 158) scale(0.86) translate(-160 -160)">
+      <path d="M 131.3 230.0 A 104 104 0 1 1 188.7 230.0" stroke="#FFFFFF" strokeWidth="18" />
+      <path d="M 134.0 201.4 A 76 76 0 1 1 186.0 201.4" stroke="#63E6BD" strokeWidth="17" />
+      <path d="M 139.6 170.1 A 45 45 0 1 1 180.4 170.1" stroke="#6FA0F2" strokeWidth="16" />
+      <path d="M 160 288 C 153 270, 167 254, 161 238 C 156 222, 165 206, 160 190 C 156 176, 162 162, 160 150" stroke="#FFFFFF" strokeWidth="18" />
+      <circle cx="160" cy="130" r="13" fill="#63E6BD" />
+      <path d="M 90 292 C 114 276, 138 276, 161 292 C 184 308, 208 308, 231 292" stroke="#FFFFFF" strokeWidth="14" />
+      <path d="M 120 313 C 140 299, 160 299, 180 313" stroke="#6FA0F2" strokeWidth="13" />
+    </g>
+  </svg>
+)
+
 const GoogleLogo = () => (
   <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden>
     <path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.7-.4-4H24v7.3h12.1c-.2 2-1.6 5-4.5 7l6.9 5.3c4.1-3.8 6.6-9.4 6.6-15.6z" />
@@ -187,7 +203,7 @@ function Auth() {
     <div className="auth">
       <div className="card">
         <div className="brand" style={{ justifyContent: 'center', marginBottom: 4 }}>
-          <span className="brand-mark">勤</span>Kintai
+          <DayDeedLogo />DayDeed
         </div>
         <p className="auth-lead">
           {mode === 'signin' ? 'アカウントにログイン'
@@ -2236,8 +2252,8 @@ function App() {
       <header className="header" style={{ visibility: me ? 'visible' : 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <button className="brand" onClick={() => setTab('home')}>
-            <span className="brand-mark">{company?.icon ?? '勤'}</span>
-            {company?.name ?? 'Kintai'}
+            {company?.icon ? <span className="brand-mark">{company.icon}</span> : <DayDeedLogo />}
+            {company?.name ?? 'DayDeed'}
           </button>
           {me?.role === 'admin' && company && (
             <button className="brand-edit" title="会社名・アイコンを変更" onClick={editBrand}>✎</button>
