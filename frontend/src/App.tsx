@@ -88,18 +88,16 @@ const MeetBadge = ({ e }: { e: ScheduleRow }) => !e.with_meet ? null : e.meet_ur
   ? <a className="badge badge-blue" href={e.meet_url} target="_blank" rel="noreferrer">Meet</a>
   : <span className="badge badge-blue">Meet</span>
 
-// DayDeedのブランドマーク(波→道→輪)。ヘッダーやログイン画面で使う
+// DayDeedのブランドマーク: DとDが編み込まれるモノグラム(ダーク角丸バッジ)
 const DayDeedLogo = ({ size = 34 }: { size?: number }) => (
-  <svg viewBox="0 0 320 320" width={size} height={size} fill="none" strokeLinecap="round" aria-hidden>
-    <circle cx="160" cy="160" r="160" fill="#0B0D0C" />
-    <g transform="translate(160 158) scale(0.86) translate(-160 -160)">
-      <path d="M 131.3 230.0 A 104 104 0 1 1 188.7 230.0" stroke="#FFFFFF" strokeWidth="18" />
-      <path d="M 134.0 201.4 A 76 76 0 1 1 186.0 201.4" stroke="#63E6BD" strokeWidth="17" />
-      <path d="M 139.6 170.1 A 45 45 0 1 1 180.4 170.1" stroke="#6FA0F2" strokeWidth="16" />
-      <path d="M 160 288 C 153 270, 167 254, 161 238 C 156 222, 165 206, 160 190 C 156 176, 162 162, 160 150" stroke="#FFFFFF" strokeWidth="18" />
-      <circle cx="160" cy="130" r="13" fill="#63E6BD" />
-      <path d="M 90 292 C 114 276, 138 276, 161 292 C 184 308, 208 308, 231 292" stroke="#FFFFFF" strokeWidth="14" />
-      <path d="M 120 313 C 140 299, 160 299, 180 313" stroke="#6FA0F2" strokeWidth="13" />
+  <svg viewBox="0 0 360 360" width={size} height={size} fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect width="360" height="360" rx="84" fill="#0B0D0C" />
+    <g transform="translate(180 180) scale(0.82) translate(-190 -160)">
+      <path d="M 64 70 L 64 250" stroke="#FFFFFF" strokeWidth="34" />
+      <path d="M 64 70 C 156 70, 208 108, 208 160 C 208 212, 156 250, 64 250" stroke="#FFFFFF" strokeWidth="34" />
+      <path d="M 172 70 L 172 250" stroke="#63E6BD" strokeWidth="34" />
+      <path d="M 172 70 C 264 70, 316 108, 316 160 C 316 212, 264 250, 172 250" stroke="#63E6BD" strokeWidth="34" />
+      <path d="M 140 71 C 168 73, 190 84, 202 106" stroke="#FFFFFF" strokeWidth="34" />
     </g>
   </svg>
 )
