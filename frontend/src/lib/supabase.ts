@@ -108,9 +108,18 @@ export type Goal = {
   due_date: string // YYYY-MM-DD
   title: string
   body: string | null
-  status: 'open' | 'done' | 'dropped'
+  status: 'open' | 'active' | 'done' | 'dropped' // open=未着手, active=実行中
   self_review: string | null
   reviewed_at: string | null
+  created_at: string
+}
+
+export type GoalAction = {
+  id: string
+  goal_id: string
+  title: string
+  done: boolean
+  done_at: string | null
   created_at: string
 }
 

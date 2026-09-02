@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isProviderEnabled, supabase, today } from './lib/supabase'
 import { DEMO, DEMO_MEMBERS } from './lib/demo'
-import type { Attendance, Break, FeedbackPost, Goal, GoalEvaluation, Invoice, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
+import type { Attendance, Break, FeedbackPost, Goal, GoalAction, GoalEvaluation, Invoice, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
 
 type Tab = 'home' | 'report' | 'schedule' | 'profile'
 
@@ -1983,7 +1983,32 @@ function MyWork({ me }: { me: Member }) {
 }
 
 /* ---------- プロフィール・設定 ---------- */
-function Profile({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
+function Profile({ me }: { me: Member }) {
+  return (
+    <>
+      <div className="card">
+        <div className="profile-head">
+          <div className="m-avatar profile-avatar">{me.name[0]}</div>
+          <div>
+            <div className="profile-name">{me.name}</div>
+            <div className="m-mail">{me.email}</div>
+            <div className="account-badges">
+              <span className="badge badge-gray">{me.role === 'admin' ? '管理者' : '一般'}</span>
+              <span className="badge badge-gray">所定 {hm(me.work_start)}–{hm(me.work_end)}</span>
+            </div>
+          </div>
+        </div>
+        {me.role !== 'admin' && (
+          <div className="notice">所定勤務時間帯の変更は管理者に依頼してください（打刻漏れ時の自動補完に使われます）</div>
+        )}
+      </div>
+      {me.hourly_rate > 0 && <MyWork me={me} />}
+    </>
+  )
+}
+
+// 連携とアカウント設定（普段は使わないので折りたたみでページ下部に置く）
+function AccountSettings({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
   const [name, setName] = useState(me.name)
   const [password, setPassword] = useState('')
   const [msg, setMsg] = useState('')
@@ -2041,27 +2066,8 @@ function Profile({ me, onRename }: { me: Member; onRename: (name: string) => voi
 
   return (
     <>
-      <div className="card">
-        <div className="profile-head">
-          <div className="m-avatar profile-avatar">{me.name[0]}</div>
-          <div>
-            <div className="profile-name">{me.name}</div>
-            <div className="m-mail">{me.email}</div>
-            <div className="account-badges">
-              <span className="badge badge-gray">{me.role === 'admin' ? '管理者' : '一般'}</span>
-              <span className="badge badge-gray">所定 {hm(me.work_start)}–{hm(me.work_end)}</span>
-            </div>
-          </div>
-        </div>
-        {me.role !== 'admin' && (
-          <div className="notice">所定勤務時間帯の変更は管理者に依頼してください（打刻漏れ時の自動補完に使われます）</div>
-        )}
-      </div>
-
-      {me.hourly_rate > 0 && <MyWork me={me} />}
-
-      <div className="card">
-        <h2>外部サービス連携</h2>
+      <details className="card collapse">
+        <summary>外部サービス連携</summary>
         <div className="link-row">
           <div className="link-info">
             <GoogleLogo />
@@ -2078,10 +2084,10 @@ function Profile({ me, onRename }: { me: Member; onRename: (name: string) => voi
             ? <button className="btn-outline" onClick={unlinkGoogle}>解除</button>
             : <button className="btn-primary" style={{ margin: 0 }} disabled={!googleOk} onClick={linkGoogle}>連携する</button>}
         </div>
-      </div>
+      </details>
 
-      <div className="card">
-        <h2>アカウント設定</h2>
+      <details className="card collapse">
+        <summary>アカウント設定</summary>
         <label htmlFor="pf-name">名前</label>
         <input id="pf-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
         <button className="btn-primary" disabled={!name || name === me.name} onClick={saveName}>名前を保存</button>
@@ -2096,7 +2102,7 @@ function Profile({ me, onRename }: { me: Member; onRename: (name: string) => voi
         {msg && <div className="notice">{msg}</div>}
         {err && <div className="notice warn">{err}</div>}
         <button className="btn-logout" onClick={() => supabase.auth.signOut()}>ログアウト</button>
-      </div>
+      </details>
     </>
   )
 }
@@ -2130,6 +2136,7 @@ function GoalsCard({ member, me, names, canEvaluate }: {
   const isSelf = member.id === me.id
   const [goals, setGoals] = useState<Goal[]>([])
   const [evals, setEvals] = useState<Record<string, GoalEvaluation[]>>({})
+  const [actions, setActions] = useState<Record<string, GoalAction[]>>({})
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(BLANK_GOAL)
   const [busy, setBusy] = useState(false)
@@ -2139,6 +2146,10 @@ function GoalsCard({ member, me, names, canEvaluate }: {
   const [evalFor, setEvalFor] = useState<string | null>(null)
   const [evalRating, setEvalRating] = useState(0)
   const [evalText, setEvalText] = useState('')
+  const [menuFor, setMenuFor] = useState<string | null>(null)
+  const [editFor, setEditFor] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState(BLANK_GOAL)
+  const [actText, setActText] = useState<Record<string, string>>({})
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('goals').select('*')
@@ -2146,11 +2157,14 @@ function GoalsCard({ member, me, names, canEvaluate }: {
     const rows = (data as Goal[] | null) ?? []
     setGoals(rows)
     const pairs = await Promise.all(rows.map(async (g) => {
-      const { data: ev } = await supabase.from('goal_evaluations').select('*')
-        .eq('goal_id', g.id).order('created_at')
-      return [g.id, (ev as GoalEvaluation[] | null) ?? []] as const
+      const [{ data: ev }, { data: ac }] = await Promise.all([
+        supabase.from('goal_evaluations').select('*').eq('goal_id', g.id).order('created_at'),
+        supabase.from('goal_actions').select('*').eq('goal_id', g.id).order('created_at'),
+      ])
+      return [g.id, { ev: (ev as GoalEvaluation[] | null) ?? [], ac: (ac as GoalAction[] | null) ?? [] }] as const
     }))
-    setEvals(Object.fromEntries(pairs))
+    setEvals(Object.fromEntries(pairs.map(([id, v]) => [id, v.ev])))
+    setActions(Object.fromEntries(pairs.map(([id, v]) => [id, v.ac])))
   }, [member.id])
 
   useEffect(() => { load() }, [load])
@@ -2174,8 +2188,60 @@ function GoalsCard({ member, me, names, canEvaluate }: {
   }
 
   const removeGoal = async (g: Goal) => {
+    setMenuFor(null)
     if (!confirm(`「${g.title}」を削除しますか？`)) return
     const { error } = await supabase.from('goals').delete().eq('id', g.id)
+    if (error) return setErr('削除できませんでした')
+    load()
+  }
+
+  const startGoal = async (g: Goal) => {
+    const { error } = await supabase.from('goals').update({ status: 'active' }).eq('id', g.id)
+    if (error) return setErr('更新できませんでした')
+    load()
+  }
+
+  const openEdit = (g: Goal) => {
+    setMenuFor(null)
+    setEditFor(g.id)
+    setEditForm({ title: g.title, body: g.body ?? '', period: g.period_type, due: g.due_date })
+  }
+
+  const saveEdit = async (g: Goal) => {
+    setErr('')
+    const due = editForm.period === 'week' ? weekEnd() : editForm.period === 'month' ? monthEnd() : editForm.due
+    const { error } = await supabase.from('goals')
+      .update({ title: editForm.title, body: editForm.body || null, period_type: editForm.period, due_date: due })
+      .eq('id', g.id)
+    if (error) return setErr(`保存できませんでした（${error.message}）`)
+    setEditFor(null)
+    load()
+  }
+
+  const addAction = async (g: Goal) => {
+    const title = (actText[g.id] ?? '').trim()
+    if (!title) return
+    setErr('')
+    const { error } = await supabase.from('goal_actions').insert({
+      goal_id: g.id, title, done: false, done_at: null, created_at: new Date().toISOString(),
+    })
+    if (error) return setErr(`アクションを追加できませんでした（${error.message}）`)
+    setActText({ ...actText, [g.id]: '' })
+    // アクションを積んだ目標は自動で「実行中」に
+    if (g.status === 'open') await supabase.from('goals').update({ status: 'active' }).eq('id', g.id)
+    load()
+  }
+
+  const toggleAction = async (a: GoalAction) => {
+    const done = !a.done
+    setActions({ ...actions, [a.goal_id]: (actions[a.goal_id] ?? []).map((x) => (x.id === a.id ? { ...x, done } : x)) })
+    const { error } = await supabase.from('goal_actions')
+      .update({ done, done_at: done ? new Date().toISOString() : null }).eq('id', a.id)
+    if (error) { setErr('更新できませんでした'); load() }
+  }
+
+  const removeAction = async (a: GoalAction) => {
+    const { error } = await supabase.from('goal_actions').delete().eq('id', a.id)
     if (error) return setErr('削除できませんでした')
     load()
   }
@@ -2202,7 +2268,10 @@ function GoalsCard({ member, me, names, canEvaluate }: {
     load()
   }
 
-  const overdue = (g: Goal) => g.status === 'open' && g.due_date <= today()
+  const overdue = (g: Goal) => (g.status === 'open' || g.status === 'active') && g.due_date <= today()
+  // 期日バッジの色: 未着手=灰、実行中=緑、期日超過=黄、終了=灰
+  const dueBadge = (g: Goal) =>
+    overdue(g) ? 'badge-yellow' : g.status === 'active' ? 'badge-green' : 'badge-gray'
 
   return (
     <div className="card">
@@ -2247,21 +2316,93 @@ function GoalsCard({ member, me, names, canEvaluate }: {
       )}
 
       <div className="list">
-        {goals.map((g) => (
+        {goals.map((g) => editFor === g.id ? (
+          <div key={g.id} className="goal-item">
+            <label htmlFor={`ge-title-${g.id}`}>目標</label>
+            <input id={`ge-title-${g.id}`} type="text" autoFocus
+              value={editForm.title} onChange={(e) => setEditForm({ ...editForm, title: e.target.value })} />
+            <label htmlFor={`ge-body-${g.id}`}>補足（任意）</label>
+            <input id={`ge-body-${g.id}`} type="text" placeholder="達成基準やメモ"
+              value={editForm.body} onChange={(e) => setEditForm({ ...editForm, body: e.target.value })} />
+            <label>期間</label>
+            <div className="seg-row" role="tablist" aria-label="目標の期間">
+              {PERIODS.map((p) => (
+                <button key={p.key} role="tab" aria-selected={editForm.period === p.key}
+                  className={`preset-chip ${editForm.period === p.key ? 'sel' : ''}`}
+                  onClick={() => setEditForm({ ...editForm, period: p.key })}>{p.label}</button>
+              ))}
+              {editForm.period === 'custom' && (
+                <input type="date" aria-label="期日" value={editForm.due}
+                  onChange={(e) => setEditForm({ ...editForm, due: e.target.value })} />
+              )}
+            </div>
+            <div className="form-actions">
+              <button className="btn-primary" style={{ margin: 0 }}
+                disabled={!editForm.title || (editForm.period === 'custom' && !editForm.due)}
+                onClick={() => saveEdit(g)}>保存</button>
+              <button className="btn-outline" onClick={() => setEditFor(null)}>キャンセル</button>
+            </div>
+          </div>
+        ) : (
           <div key={g.id} className="goal-item">
             <div className="goal-head">
-              <span className="badge badge-blue">
+              <span className={`badge ${dueBadge(g)}`}>
                 {g.period_type === 'week' ? '今週' : g.period_type === 'month' ? '今月' : '中長期'} · {fmtMd(g.due_date)}まで
               </span>
-              {g.status === 'done' && <span className="badge badge-gray">達成・振り返り済み</span>}
+              {g.status === 'done' && <span className="badge badge-blue">達成・振り返り済み</span>}
               {g.status === 'dropped' && <span className="badge badge-gray">取り下げ</span>}
               {overdue(g) && <span className="badge badge-yellow">期日到来・振り返り待ち</span>}
-              {isSelf && g.status === 'open' && (
-                <button className="edit-delete goal-delete" onClick={() => removeGoal(g)}>削除</button>
+              {!overdue(g) && g.status === 'active' && <span className="badge badge-green">実行中</span>}
+              {!overdue(g) && g.status === 'open' && <span className="badge badge-gray">未着手</span>}
+              {isSelf && g.status === 'open' && !overdue(g) && (
+                <button className="btn-chip" onClick={() => startGoal(g)}>着手する</button>
+              )}
+              {isSelf && (g.status === 'open' || g.status === 'active') && (
+                <div className="goal-menu">
+                  <button className="icon-btn goal-menu-btn" aria-label="目標の操作" aria-expanded={menuFor === g.id}
+                    onClick={() => setMenuFor(menuFor === g.id ? null : g.id)}>⋯</button>
+                  {menuFor === g.id && (
+                    <div className="goal-menu-pop" role="menu">
+                      <button role="menuitem" onClick={() => openEdit(g)}>編集</button>
+                      <button role="menuitem" className="danger" onClick={() => removeGoal(g)}>削除</button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             <div className="goal-title">{g.title}</div>
             {g.body && <div className="goal-body">{g.body}</div>}
+
+            {((actions[g.id] ?? []).length > 0 || (isSelf && (g.status === 'open' || g.status === 'active'))) && (
+              <div className="goal-actions">
+                <div className="goal-actions-label">
+                  ネクストアクション
+                  {(actions[g.id] ?? []).length > 0 && (
+                    <span className="goal-actions-count">
+                      {(actions[g.id] ?? []).filter((a) => a.done).length}/{(actions[g.id] ?? []).length} 完了
+                    </span>
+                  )}
+                </div>
+                {(actions[g.id] ?? []).map((a) => (
+                  <div key={a.id} className={`goal-action ${a.done ? 'done' : ''}`}>
+                    <label>
+                      <input type="checkbox" checked={a.done} disabled={!isSelf}
+                        onChange={() => toggleAction(a)} />
+                      <span>{a.title}</span>
+                    </label>
+                    {isSelf && <button className="pt-break-del" aria-label="アクションを削除" onClick={() => removeAction(a)}>×</button>}
+                  </div>
+                ))}
+                {isSelf && (g.status === 'open' || g.status === 'active') && (
+                  <div className="goal-action-add">
+                    <input type="text" placeholder="＋ やることを追加（Enterで確定）"
+                      value={actText[g.id] ?? ''}
+                      onChange={(e) => setActText({ ...actText, [g.id]: e.target.value })}
+                      onKeyDown={(e) => { if (e.key === 'Enter') addAction(g) }} />
+                  </div>
+                )}
+              </div>
+            )}
 
             {g.self_review && (
               <div className="goal-review">
@@ -2454,7 +2595,7 @@ function ProfilePage({ me, onRename }: { me: Member; onRename: (name: string) =>
         <Members me={me} onOpenProfile={setViewing} />
       ) : (
         <>
-          <Profile me={me} onRename={onRename} />
+          <Profile me={me} />
           <GoalsCard member={me} me={me} names={names} />
           <FeedbackCard target={me} me={me} names={names} />
           {colleagues.length > 0 && (
@@ -2473,6 +2614,7 @@ function ProfilePage({ me, onRename }: { me: Member; onRename: (name: string) =>
               </div>
             </div>
           )}
+          <AccountSettings me={me} onRename={onRename} />
         </>
       )}
     </>
