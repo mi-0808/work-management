@@ -2476,8 +2476,11 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
       {rows.length > 0 && (
         <div className="plan-table-wrap">
           <table className="plan-table na-table">
+            <colgroup>
+              <col className="na-col-status" /><col /><col className="na-col-due" />
+            </colgroup>
             <thead>
-              <tr><th>ステータス</th><th>内容</th><th>期日</th>{isSelf && <th aria-label="操作"></th>}</tr>
+              <tr><th>ステータス</th><th>内容</th><th>期日</th></tr>
             </thead>
             <tbody>
               {rows.map((r) => (
@@ -2498,9 +2501,13 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
                   </td>
                   <td className="na-title">
                     {isSelf ? (
-                      <input type="text" value={r.title} aria-label="内容"
-                        onChange={(e) => patch(r.id, { title: e.target.value })}
-                        onBlur={() => saveTitle(r)} />
+                      <div className="na-title-wrap">
+                        <input type="text" value={r.title} aria-label="内容"
+                          onChange={(e) => patch(r.id, { title: e.target.value })}
+                          onBlur={() => saveTitle(r)} />
+                        <button className="pt-break-del na-del" aria-label={`${r.title}を削除`}
+                          onClick={() => remove(r)}>×</button>
+                      </div>
                     ) : r.title}
                   </td>
                   <td className="na-due">
@@ -2509,9 +2516,6 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
                         onChange={(e) => changeDue(r, e.target.value)} />
                     ) : (r.due_date ? fmtMd(r.due_date) : '—')}
                   </td>
-                  {isSelf && (
-                    <td><button className="pt-break-del" aria-label={`${r.title}を削除`} onClick={() => remove(r)}>×</button></td>
-                  )}
                 </tr>
               ))}
             </tbody>
@@ -2523,7 +2527,8 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
           <div className="draft-times">
             <input type="text" placeholder="＋ やることを追加（Enterで確定）" style={{ flex: 1 }}
               value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') add() }} />
+              // 日本語入力の変換確定Enterでは追加しない（isComposing対策。Safariはconfirm時にkeyCode 229）
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) add() }} />
           </div>
           <div className="notice">目標とは別の、直近のやることリストです。稼働表とは連動しません</div>
         </>

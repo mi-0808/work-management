@@ -693,3 +693,11 @@ tr:last-child td { border-bottom: none; }
 .na-status.na-doing { background: var(--success-bg); color: var(--success); border-color: transparent; }
 .na-status.na-done { background: var(--blue-50); color: var(--blue-700); border-color: transparent; }
 .na-done .na-title input, .na-done .na-title { text-decoration: line-through; color: var(--muted); }
+
+/* ネクストアクション: 削除は内容セル内に重ねる（ホバーで表示、タッチでは常時） */
+.na-table col.na-col-status { width: 112px; }
+.na-table col.na-col-due { width: 148px; }
+.na-title-wrap { display: flex; align-items: center; }
+.na-title-wrap .na-del { opacity: 0; transition: opacity .12s; flex: none; }
+.na-table tr:hover .na-del, .na-title-wrap:focus-within .na-del { opacity: 1; }
+@media (hover: none) { .na-title-wrap .na-del { opacity: .6; } }
