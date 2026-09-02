@@ -2286,9 +2286,9 @@ function GoalsCard({ member, me, names, canEvaluate }: {
         <div className="notice">{isSelf ? 'まだ目標がありません。「＋ 目標を追加」から設定できます' : 'まだ目標がありません'}</div>
       )}
 
-      <div className="goal-list">
+      <div className="list">
         {goals.map((g) => editFor === g.id ? (
-          <div key={g.id} className="goal-row">
+          <div key={g.id} className="goal-item">
             <label htmlFor={`ge-title-${g.id}`}>目標</label>
             <input id={`ge-title-${g.id}`} type="text" autoFocus
               value={editForm.title} onChange={(e) => setEditForm({ ...editForm, title: e.target.value })} />
@@ -2315,9 +2315,19 @@ function GoalsCard({ member, me, names, canEvaluate }: {
             </div>
           </div>
         ) : (
-          <div key={g.id} className="goal-row">
-            <div className="goal-top">
-              <div className="goal-title">{g.title}</div>
+          <div key={g.id} className="goal-item">
+            <div className="goal-head">
+              <span className={`badge ${dueBadge(g)}`}>
+                {g.period_type === 'week' ? '今週' : g.period_type === 'month' ? '今月' : '中長期'} · {fmtMd(g.due_date)}まで
+              </span>
+              {g.status === 'done' && <span className="badge badge-blue">達成・振り返り済み</span>}
+              {g.status === 'dropped' && <span className="badge badge-gray">取り下げ</span>}
+              {overdue(g) && <span className="badge badge-yellow">期日到来・振り返り待ち</span>}
+              {!overdue(g) && g.status === 'active' && <span className="badge badge-green">実行中</span>}
+              {!overdue(g) && g.status === 'open' && <span className="badge badge-gray">未着手</span>}
+              {isSelf && g.status === 'open' && !overdue(g) && (
+                <button className="btn-chip" onClick={() => startGoal(g)}>着手する</button>
+              )}
               {isSelf && (g.status === 'open' || g.status === 'active') && (
                 <div className="goal-menu">
                   <button className="icon-btn goal-menu-btn" aria-label="目標の操作" aria-expanded={menuFor === g.id}
@@ -2331,23 +2341,11 @@ function GoalsCard({ member, me, names, canEvaluate }: {
                 </div>
               )}
             </div>
-            <div className="goal-head">
-              <span className={`badge ${dueBadge(g)}`}>
-                {g.period_type === 'week' ? '今週' : g.period_type === 'month' ? '今月' : '中長期'} · {fmtMd(g.due_date)}まで
-              </span>
-              {g.status === 'done' && <span className="badge badge-blue">達成・振り返り済み</span>}
-              {g.status === 'dropped' && <span className="badge badge-gray">取り下げ</span>}
-              {overdue(g) && <span className="badge badge-yellow">期日到来・振り返り待ち</span>}
-              {!overdue(g) && g.status === 'active' && <span className="badge badge-green">実行中</span>}
-              {!overdue(g) && g.status === 'open' && <span className="badge badge-gray">未着手</span>}
-              {isSelf && g.status === 'open' && !overdue(g) && (
-                <button className="goal-link" onClick={() => startGoal(g)}>着手する</button>
-              )}
-            </div>
+            <div className="goal-title">{g.title}</div>
             {g.body && <div className="goal-body">{g.body}</div>}
 
             {g.self_review && (
-              <div className="goal-quote">
+              <div className="goal-review">
                 <span className="goal-review-label">振り返り</span>{g.self_review}
               </div>
             )}
@@ -2363,12 +2361,12 @@ function GoalsCard({ member, me, names, canEvaluate }: {
                   </div>
                 </div>
               ) : (
-                <button className="goal-link" onClick={() => { setReviewFor(g.id); setReviewText('') }}>振り返りを書く</button>
+                <button className="btn-outline" onClick={() => { setReviewFor(g.id); setReviewText('') }}>振り返りを書く</button>
               )
             )}
 
             {(evals[g.id] ?? []).map((ev) => (
-              <div key={ev.id} className="goal-quote">
+              <div key={ev.id} className="goal-eval">
                 <span className="goal-review-label">{names[ev.evaluator_member_id] ?? '—'}の評価</span>
                 {ev.rating != null && <span className="goal-stars">{'★'.repeat(ev.rating)}{'☆'.repeat(5 - ev.rating)}</span>}
                 {ev.comment}
@@ -2393,7 +2391,7 @@ function GoalsCard({ member, me, names, canEvaluate }: {
                   </div>
                 </div>
               ) : (
-                <button className="goal-link" onClick={() => { setEvalFor(g.id); setEvalRating(0); setEvalText('') }}>評価する</button>
+                <button className="btn-outline" onClick={() => { setEvalFor(g.id); setEvalRating(0); setEvalText('') }}>評価する</button>
               )
             )}
           </div>
@@ -2555,8 +2553,8 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
       )}
       {isSelf && (
         <>
-          <div className="na-add">
-            <input type="text" placeholder="＋ やることを追加" style={{ flex: 1 }}
+          <div className="draft-times">
+            <input type="text" placeholder="やることを追加" style={{ flex: 1 }}
               value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
               onCompositionStart={() => { composing.current = true }}
               onCompositionEnd={() => { composing.current = false }}
