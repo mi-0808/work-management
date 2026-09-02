@@ -81,6 +81,8 @@ export type Schedule = {
   status: 'proposed' | 'confirmed' | 'declined'
   proposed_by: string | null // 最後に提案した人
   to_member_id: string | null // 提案の宛先（承認・修正できるのはこの人だけ）
+  google_event_id?: string | null // Googleカレンダー同期済みイベントID（nullなら未同期）
+  meet_url?: string | null
 }
 
 export type Report = {
