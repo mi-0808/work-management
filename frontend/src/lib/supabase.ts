@@ -100,4 +100,50 @@ export type Report = {
 
 }
 
+export type Goal = {
+  id: string
+  company_id: string
+  member_id: string
+  period_type: 'week' | 'month' | 'custom'
+  due_date: string // YYYY-MM-DD
+  title: string
+  body: string | null
+  status: 'open' | 'active' | 'done' | 'dropped' // open=未着手, active=実行中
+  self_review: string | null
+  reviewed_at: string | null
+  google_event_id: string | null
+  created_at: string
+}
+
+export type NextAction = {
+  id: string
+  company_id: string
+  member_id: string
+  title: string
+  status: 'todo' | 'doing' | 'done' // 未着手・進行中・完了
+  due_date: string | null
+  note: string | null
+  done_at: string | null
+  google_event_id: string | null
+  created_at: string
+}
+
+export type GoalEvaluation = {
+  id: string
+  goal_id: string
+  evaluator_member_id: string
+  rating: number | null // 1〜5
+  comment: string
+  created_at: string
+}
+
+export type FeedbackPost = {
+  id: string
+  company_id: string
+  target_member_id: string
+  author_member_id: string
+  body: string
+  created_at: string
+}
+
 export const today = () => new Date().toLocaleDateString('sv-SE') // YYYY-MM-DD ローカル日付
