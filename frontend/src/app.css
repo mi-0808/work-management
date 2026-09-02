@@ -738,3 +738,12 @@ tr:last-child td { border-bottom: none; }
 .due-list { margin: 0 0 10px; display: flex; flex-direction: column; gap: 6px; }
 .due-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .due-row .due-title { font-weight: 600; }
+
+/* ネクストアクション: 完了はToDo風に消す */
+.na-leaving td { animation: na-fade .9s ease forwards; }
+@keyframes na-fade { 0% { opacity: 1; } 40% { opacity: 1; } 100% { opacity: .12; } }
+.na-show-done {
+  border: none; background: none; cursor: pointer; padding: 6px 2px;
+  color: var(--blue-600); font-size: 13px; font-weight: 700; text-align: left;
+}
+.na-show-done:hover { text-decoration: underline; }

@@ -2457,6 +2457,8 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
   const [newTitle, setNewTitle] = useState('')
   const [err, setErr] = useState('')
   const [saved, setSaved] = useState(false)
+  const [showDone, setShowDone] = useState(false)
+  const [leaving, setLeaving] = useState<Set<string>>(new Set()) // 完了直後、消えるまでの間の行
   const composing = useRef(false) // IME変換中はEnterで追加しない
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
@@ -2482,7 +2484,13 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
 
   const changeStatus = async (r: NextAction, status: NextAction['status']) => {
     const p = { status, done_at: status === 'done' ? new Date().toISOString() : null }
-    patch(r.id, p); await save(r.id, p)
+    patch(r.id, p)
+    if (status === 'done' && !showDone) {
+      // 打ち消し線を一拍見せてからスッと消す
+      setLeaving((s) => new Set(s).add(r.id))
+      setTimeout(() => setLeaving((s) => { const n = new Set(s); n.delete(r.id); return n }), 900)
+    }
+    await save(r.id, p)
     // 完了したらカレンダーから消し、戻したら再同期する
     dueSync('next_action', r.id, status === 'done' ? 'delete' : 'upsert')
   }
@@ -2531,6 +2539,9 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
   }
 
   const doneCount = rows.filter((r) => r.status === 'done').length
+  // 完了した行はToDoアプリのように一覧から消す（少しの間打ち消し線で見せてから）。
+  // 「完了を表示」で見返し・未完了への戻しができる
+  const visibleRows = rows.filter((r) => r.status !== 'done' || showDone || leaving.has(r.id))
 
   if (!isSelf && rows.length === 0) return null
 
@@ -2541,7 +2552,7 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
         <span className="tag">{rows.length > 0 ? `${doneCount}/${rows.length} 完了` : '直近のやること'}</span>
         {saved && <span className="pt-saved">✓ 保存</span>}
       </h2>
-      {rows.length > 0 && (
+      {visibleRows.length > 0 && (
         <div className="plan-table-wrap">
           <table className="plan-table na-table">
             <colgroup>
@@ -2551,8 +2562,8 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
               <tr><th>期日</th><th>内容</th><th>ステータス</th><th>メモ</th></tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className={r.status === 'done' ? 'na-done' : ''}>
+              {visibleRows.map((r) => (
+                <tr key={r.id} className={`${r.status === 'done' ? 'na-done' : ''} ${leaving.has(r.id) ? 'na-leaving' : ''}`}>
                   <td className="na-due">
                     {isSelf ? (
                       // 表示は月/日だけにして、タップで下の透明なdate入力のピッカーを開く
@@ -2600,6 +2611,11 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
             </tbody>
           </table>
         </div>
+      )}
+      {doneCount > 0 && (
+        <button className="na-show-done" onClick={() => setShowDone(!showDone)}>
+          {showDone ? '完了したものを隠す' : `完了した${doneCount}件を表示`}
+        </button>
       )}
       {isSelf && (
         <>
