@@ -1,5 +1,5 @@
 // /demo 用のインメモリSupabaseモック。リロードで初期化される
-import type { Attendance, Break, FeedbackPost, Goal, GoalAction, GoalEvaluation, Invoice, Member, Report, Schedule } from './supabase'
+import type { Attendance, Break, FeedbackPost, Goal, GoalEvaluation, Invoice, Member, NextAction, Report, Schedule } from './supabase'
 
 export const DEMO = location.pathname.startsWith('/demo')
 
@@ -120,11 +120,11 @@ const goals: Goal[] = [
     title: '顧客リストの整理を完了する', body: null, status: 'done',
     self_review: '予定通り完了。重複データの削除も併せて実施した。', reviewed_at: at(dayOffset(-3), 18), created_at: at(dayOffset(-8), 9) },
 ]
-const goal_actions: GoalAction[] = [
-  { id: uid(), goal_id: goals[2].id, title: '現行フローの棚卸し', done: true, done_at: at(dayOffset(-7), 17), created_at: at(dayOffset(-10), 9) },
-  { id: uid(), goal_id: goals[2].id, title: 'テンプレートの下書きを作る', done: false, done_at: null, created_at: at(dayOffset(-9), 9) },
-  { id: uid(), goal_id: goals[2].id, title: '経理に確認を取る', done: false, done_at: null, created_at: at(dayOffset(-9), 9) },
-  { id: uid(), goal_id: goals[1].id, title: '上期の実績を集計する', done: false, done_at: null, created_at: at(dayOffset(-20), 9) },
+const next_actions: NextAction[] = [
+  { id: uid(), company_id: 'c1', member_id: 'm2', title: '現行フローの棚卸し', status: 'done', due_date: dayOffset(-7), done_at: at(dayOffset(-7), 17), created_at: at(dayOffset(-10), 9) },
+  { id: uid(), company_id: 'c1', member_id: 'm2', title: 'テンプレートの下書きを作る', status: 'doing', due_date: dayOffset(2), done_at: null, created_at: at(dayOffset(-9), 9) },
+  { id: uid(), company_id: 'c1', member_id: 'm2', title: '経理に確認を取る', status: 'todo', due_date: null, done_at: null, created_at: at(dayOffset(-9), 9) },
+  { id: uid(), company_id: 'c1', member_id: 'm1', title: '上期の実績を集計する', status: 'doing', due_date: dayOffset(5), done_at: null, created_at: at(dayOffset(-20), 9) },
 ]
 const goal_evaluations: GoalEvaluation[] = [
   { id: uid(), goal_id: goals[3].id, evaluator_member_id: 'm1', rating: 5,
@@ -146,7 +146,7 @@ const tables: Record<string, Record<string, unknown>[]> = {
   schedules: schedules as unknown as Record<string, unknown>[],
   invoices: invoices as unknown as Record<string, unknown>[],
   goals: goals as unknown as Record<string, unknown>[],
-  goal_actions: goal_actions as unknown as Record<string, unknown>[],
+  next_actions: next_actions as unknown as Record<string, unknown>[],
   goal_evaluations: goal_evaluations as unknown as Record<string, unknown>[],
   feedback_posts: feedback_posts as unknown as Record<string, unknown>[],
 }

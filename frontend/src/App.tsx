@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isProviderEnabled, supabase, today } from './lib/supabase'
 import { DEMO, DEMO_MEMBERS } from './lib/demo'
-import type { Attendance, Break, FeedbackPost, Goal, GoalAction, GoalEvaluation, Invoice, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
+import type { Attendance, Break, FeedbackPost, Goal, GoalEvaluation, Invoice, Member, NextAction, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
 
 type Tab = 'home' | 'report' | 'schedule' | 'profile'
 
@@ -1983,11 +1983,13 @@ function MyWork({ me }: { me: Member }) {
 }
 
 /* ---------- プロフィール・設定 ---------- */
-function Profile({ me }: { me: Member }) {
+function Profile({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
+  const [settingsOpen, setSettingsOpen] = useState(false)
   return (
     <>
       <div className="card">
-        <div className="profile-head">
+        <button className="profile-head profile-head-btn" aria-expanded={settingsOpen}
+          title="連携・アカウント設定を開く" onClick={() => setSettingsOpen(!settingsOpen)}>
           <div className="m-avatar profile-avatar">{me.name[0]}</div>
           <div>
             <div className="profile-name">{me.name}</div>
@@ -1997,17 +1999,19 @@ function Profile({ me }: { me: Member }) {
               <span className="badge badge-gray">所定 {hm(me.work_start)}–{hm(me.work_end)}</span>
             </div>
           </div>
-        </div>
+          <span className="profile-caret">{settingsOpen ? '▴' : '▾'}</span>
+        </button>
         {me.role !== 'admin' && (
           <div className="notice">所定勤務時間帯の変更は管理者に依頼してください（打刻漏れ時の自動補完に使われます）</div>
         )}
       </div>
+      {settingsOpen && <AccountSettings me={me} onRename={onRename} />}
       {me.hourly_rate > 0 && <MyWork me={me} />}
     </>
   )
 }
 
-// 連携とアカウント設定（普段は使わないので折りたたみでページ下部に置く）
+// 連携とアカウント設定（プロフィールの一番上をタップすると表示される）
 function AccountSettings({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
   const [name, setName] = useState(me.name)
   const [password, setPassword] = useState('')
@@ -2066,8 +2070,8 @@ function AccountSettings({ me, onRename }: { me: Member; onRename: (name: string
 
   return (
     <>
-      <details className="card collapse">
-        <summary>外部サービス連携</summary>
+      <div className="card">
+        <h2>外部サービス連携</h2>
         <div className="link-row">
           <div className="link-info">
             <GoogleLogo />
@@ -2084,10 +2088,10 @@ function AccountSettings({ me, onRename }: { me: Member; onRename: (name: string
             ? <button className="btn-outline" onClick={unlinkGoogle}>解除</button>
             : <button className="btn-primary" style={{ margin: 0 }} disabled={!googleOk} onClick={linkGoogle}>連携する</button>}
         </div>
-      </details>
+      </div>
 
-      <details className="card collapse">
-        <summary>アカウント設定</summary>
+      <div className="card">
+        <h2>アカウント設定</h2>
         <label htmlFor="pf-name">名前</label>
         <input id="pf-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
         <button className="btn-primary" disabled={!name || name === me.name} onClick={saveName}>名前を保存</button>
@@ -2102,7 +2106,7 @@ function AccountSettings({ me, onRename }: { me: Member; onRename: (name: string
         {msg && <div className="notice">{msg}</div>}
         {err && <div className="notice warn">{err}</div>}
         <button className="btn-logout" onClick={() => supabase.auth.signOut()}>ログアウト</button>
-      </details>
+      </div>
     </>
   )
 }
@@ -2136,7 +2140,6 @@ function GoalsCard({ member, me, names, canEvaluate }: {
   const isSelf = member.id === me.id
   const [goals, setGoals] = useState<Goal[]>([])
   const [evals, setEvals] = useState<Record<string, GoalEvaluation[]>>({})
-  const [actions, setActions] = useState<Record<string, GoalAction[]>>({})
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(BLANK_GOAL)
   const [busy, setBusy] = useState(false)
@@ -2149,7 +2152,6 @@ function GoalsCard({ member, me, names, canEvaluate }: {
   const [menuFor, setMenuFor] = useState<string | null>(null)
   const [editFor, setEditFor] = useState<string | null>(null)
   const [editForm, setEditForm] = useState(BLANK_GOAL)
-  const [actText, setActText] = useState<Record<string, string>>({})
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('goals').select('*')
@@ -2157,14 +2159,11 @@ function GoalsCard({ member, me, names, canEvaluate }: {
     const rows = (data as Goal[] | null) ?? []
     setGoals(rows)
     const pairs = await Promise.all(rows.map(async (g) => {
-      const [{ data: ev }, { data: ac }] = await Promise.all([
-        supabase.from('goal_evaluations').select('*').eq('goal_id', g.id).order('created_at'),
-        supabase.from('goal_actions').select('*').eq('goal_id', g.id).order('created_at'),
-      ])
-      return [g.id, { ev: (ev as GoalEvaluation[] | null) ?? [], ac: (ac as GoalAction[] | null) ?? [] }] as const
+      const { data: ev } = await supabase.from('goal_evaluations').select('*')
+        .eq('goal_id', g.id).order('created_at')
+      return [g.id, (ev as GoalEvaluation[] | null) ?? []] as const
     }))
-    setEvals(Object.fromEntries(pairs.map(([id, v]) => [id, v.ev])))
-    setActions(Object.fromEntries(pairs.map(([id, v]) => [id, v.ac])))
+    setEvals(Object.fromEntries(pairs))
   }, [member.id])
 
   useEffect(() => { load() }, [load])
@@ -2215,34 +2214,6 @@ function GoalsCard({ member, me, names, canEvaluate }: {
       .eq('id', g.id)
     if (error) return setErr(`保存できませんでした（${error.message}）`)
     setEditFor(null)
-    load()
-  }
-
-  const addAction = async (g: Goal) => {
-    const title = (actText[g.id] ?? '').trim()
-    if (!title) return
-    setErr('')
-    const { error } = await supabase.from('goal_actions').insert({
-      goal_id: g.id, title, done: false, done_at: null, created_at: new Date().toISOString(),
-    })
-    if (error) return setErr(`アクションを追加できませんでした（${error.message}）`)
-    setActText({ ...actText, [g.id]: '' })
-    // アクションを積んだ目標は自動で「実行中」に
-    if (g.status === 'open') await supabase.from('goals').update({ status: 'active' }).eq('id', g.id)
-    load()
-  }
-
-  const toggleAction = async (a: GoalAction) => {
-    const done = !a.done
-    setActions({ ...actions, [a.goal_id]: (actions[a.goal_id] ?? []).map((x) => (x.id === a.id ? { ...x, done } : x)) })
-    const { error } = await supabase.from('goal_actions')
-      .update({ done, done_at: done ? new Date().toISOString() : null }).eq('id', a.id)
-    if (error) { setErr('更新できませんでした'); load() }
-  }
-
-  const removeAction = async (a: GoalAction) => {
-    const { error } = await supabase.from('goal_actions').delete().eq('id', a.id)
-    if (error) return setErr('削除できませんでした')
     load()
   }
 
@@ -2373,37 +2344,6 @@ function GoalsCard({ member, me, names, canEvaluate }: {
             <div className="goal-title">{g.title}</div>
             {g.body && <div className="goal-body">{g.body}</div>}
 
-            {((actions[g.id] ?? []).length > 0 || (isSelf && (g.status === 'open' || g.status === 'active'))) && (
-              <div className="goal-actions">
-                <div className="goal-actions-label">
-                  ネクストアクション
-                  {(actions[g.id] ?? []).length > 0 && (
-                    <span className="goal-actions-count">
-                      {(actions[g.id] ?? []).filter((a) => a.done).length}/{(actions[g.id] ?? []).length} 完了
-                    </span>
-                  )}
-                </div>
-                {(actions[g.id] ?? []).map((a) => (
-                  <div key={a.id} className={`goal-action ${a.done ? 'done' : ''}`}>
-                    <label>
-                      <input type="checkbox" checked={a.done} disabled={!isSelf}
-                        onChange={() => toggleAction(a)} />
-                      <span>{a.title}</span>
-                    </label>
-                    {isSelf && <button className="pt-break-del" aria-label="アクションを削除" onClick={() => removeAction(a)}>×</button>}
-                  </div>
-                ))}
-                {isSelf && (g.status === 'open' || g.status === 'active') && (
-                  <div className="goal-action-add">
-                    <input type="text" placeholder="＋ やることを追加（Enterで確定）"
-                      value={actText[g.id] ?? ''}
-                      onChange={(e) => setActText({ ...actText, [g.id]: e.target.value })}
-                      onKeyDown={(e) => { if (e.key === 'Enter') addAction(g) }} />
-                  </div>
-                )}
-              </div>
-            )}
-
             {g.self_review && (
               <div className="goal-review">
                 <span className="goal-review-label">振り返り</span>{g.self_review}
@@ -2457,6 +2397,137 @@ function GoalsCard({ member, me, names, canEvaluate }: {
           </div>
         ))}
       </div>
+      {err && <div className="notice warn">{err}</div>}
+    </div>
+  )
+}
+
+/* ---------- ネクストアクション（目標とは別の、直近のやること管理） ---------- */
+const NA_LABEL: Record<NextAction['status'], string> = { todo: '未着手', doing: '進行中', done: '完了' }
+
+function NextActionsCard({ member, me }: { member: Member; me: Member }) {
+  const isSelf = member.id === me.id
+  const [rows, setRows] = useState<NextAction[]>([])
+  const [newTitle, setNewTitle] = useState('')
+  const [err, setErr] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from('next_actions').select('*')
+      .eq('member_id', member.id).order('created_at')
+    setRows((data as NextAction[] | null) ?? [])
+  }, [member.id])
+
+  useEffect(() => { load() }, [load])
+
+  const flash = () => { setSaved(true); setTimeout(() => setSaved(false), 1500) }
+
+  const patch = (id: string, p: Partial<NextAction>) =>
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...p } : r)))
+
+  const save = async (id: string, p: Partial<NextAction>) => {
+    setErr('')
+    const { error } = await supabase.from('next_actions').update(p).eq('id', id)
+    if (error) return setErr('保存できませんでした')
+    flash()
+  }
+
+  const changeStatus = (r: NextAction, status: NextAction['status']) => {
+    const p = { status, done_at: status === 'done' ? new Date().toISOString() : null }
+    patch(r.id, p); save(r.id, p)
+  }
+  const changeDue = (r: NextAction, due: string) => {
+    const p = { due_date: due || null }
+    patch(r.id, p); save(r.id, p)
+  }
+  const saveTitle = (r: NextAction) => { if (r.title.trim()) save(r.id, { title: r.title.trim() }) }
+
+  const add = async () => {
+    const title = newTitle.trim()
+    if (!title) return
+    setErr('')
+    const { error } = await supabase.from('next_actions').insert({
+      company_id: member.company_id, member_id: member.id,
+      title, status: 'todo', due_date: null, done_at: null,
+      created_at: new Date().toISOString(),
+    })
+    if (error) return setErr(`追加できませんでした（${error.message}）`)
+    setNewTitle('')
+    load()
+  }
+
+  const remove = async (r: NextAction) => {
+    const { error } = await supabase.from('next_actions').delete().eq('id', r.id)
+    if (error) return setErr('削除できませんでした')
+    load()
+  }
+
+  const doneCount = rows.filter((r) => r.status === 'done').length
+
+  if (!isSelf && rows.length === 0) return null
+
+  return (
+    <div className="card">
+      <h2>
+        ネクストアクション{' '}
+        <span className="tag">{rows.length > 0 ? `${doneCount}/${rows.length} 完了` : '直近のやること'}</span>
+        {saved && <span className="pt-saved">✓ 保存</span>}
+      </h2>
+      {rows.length > 0 && (
+        <div className="plan-table-wrap">
+          <table className="plan-table na-table">
+            <thead>
+              <tr><th>ステータス</th><th>内容</th><th>期日</th>{isSelf && <th aria-label="操作"></th>}</tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className={r.status === 'done' ? 'na-done' : ''}>
+                  <td>
+                    {isSelf ? (
+                      <select className={`na-status na-${r.status}`} value={r.status} aria-label={`${r.title}のステータス`}
+                        onChange={(e) => changeStatus(r, e.target.value as NextAction['status'])}>
+                        {(['todo', 'doing', 'done'] as const).map((s) => (
+                          <option key={s} value={s}>{NA_LABEL[s]}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className={`badge ${r.status === 'done' ? 'badge-blue' : r.status === 'doing' ? 'badge-green' : 'badge-gray'}`}>
+                        {NA_LABEL[r.status]}
+                      </span>
+                    )}
+                  </td>
+                  <td className="na-title">
+                    {isSelf ? (
+                      <input type="text" value={r.title} aria-label="内容"
+                        onChange={(e) => patch(r.id, { title: e.target.value })}
+                        onBlur={() => saveTitle(r)} />
+                    ) : r.title}
+                  </td>
+                  <td className="na-due">
+                    {isSelf ? (
+                      <input type="date" value={r.due_date ?? ''} aria-label="期日"
+                        onChange={(e) => changeDue(r, e.target.value)} />
+                    ) : (r.due_date ? fmtMd(r.due_date) : '—')}
+                  </td>
+                  {isSelf && (
+                    <td><button className="pt-break-del" aria-label={`${r.title}を削除`} onClick={() => remove(r)}>×</button></td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {isSelf && (
+        <>
+          <div className="draft-times">
+            <input type="text" placeholder="＋ やることを追加（Enterで確定）" style={{ flex: 1 }}
+              value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') add() }} />
+          </div>
+          <div className="notice">目標とは別の、直近のやることリストです。稼働表とは連動しません</div>
+        </>
+      )}
       {err && <div className="notice warn">{err}</div>}
     </div>
   )
@@ -2554,6 +2625,7 @@ function MemberProfileView({ member, me, names, onBack }: {
           <button className="btn-outline" onClick={onBack}>← 戻る</button>
         </div>
       </div>
+      <NextActionsCard member={member} me={me} />
       <GoalsCard member={member} me={me} names={names} canEvaluate={me.role === 'admin'} />
       <FeedbackCard target={member} me={me} names={names} />
     </>
@@ -2595,7 +2667,8 @@ function ProfilePage({ me, onRename }: { me: Member; onRename: (name: string) =>
         <Members me={me} onOpenProfile={setViewing} />
       ) : (
         <>
-          <Profile me={me} />
+          <Profile me={me} onRename={onRename} />
+          <NextActionsCard member={me} me={me} />
           <GoalsCard member={me} me={me} names={names} />
           <FeedbackCard target={me} me={me} names={names} />
           {colleagues.length > 0 && (
@@ -2614,7 +2687,6 @@ function ProfilePage({ me, onRename }: { me: Member; onRename: (name: string) =>
               </div>
             </div>
           )}
-          <AccountSettings me={me} onRename={onRename} />
         </>
       )}
     </>

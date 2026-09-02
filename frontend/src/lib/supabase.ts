@@ -114,11 +114,13 @@ export type Goal = {
   created_at: string
 }
 
-export type GoalAction = {
+export type NextAction = {
   id: string
-  goal_id: string
+  company_id: string
+  member_id: string
   title: string
-  done: boolean
+  status: 'todo' | 'doing' | 'done' // 未着手・進行中・完了
+  due_date: string | null
   done_at: string | null
   created_at: string
 }
