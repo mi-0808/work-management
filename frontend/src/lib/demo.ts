@@ -1,5 +1,5 @@
 // /demo 用のインメモリSupabaseモック。リロードで初期化される
-import type { Attendance, Break, Invoice, Member, Report, Schedule } from './supabase'
+import type { Attendance, Break, FeedbackPost, Goal, GoalEvaluation, Invoice, Member, Report, Schedule } from './supabase'
 
 export const DEMO = location.pathname.startsWith('/demo')
 
@@ -104,6 +104,33 @@ const invoices: Invoice[] = [
     issued_at: at(today(), 9), paid_at: at(today(), 10) },
 ]
 
+// 個人目標（今週=期日超過の未振り返り、振り返り済み＋評価あり、中長期を混ぜる）
+const monthEnd = (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth() + 1, 0).toLocaleDateString('sv-SE') })()
+const goals: Goal[] = [
+  { id: uid(), company_id: 'c1', member_id: 'm1', period_type: 'week', due_date: dayOffset(-1),
+    title: '新規案件の見積もりを3件出す', body: null, status: 'open',
+    self_review: null, reviewed_at: null, created_at: at(dayOffset(-6), 9) },
+  { id: uid(), company_id: 'c1', member_id: 'm1', period_type: 'custom', due_date: `${new Date().getFullYear()}-12-31`,
+    title: '年間売上目標の達成', body: '前年比110%を目指す', status: 'open',
+    self_review: null, reviewed_at: null, created_at: at(dayOffset(-30), 9) },
+  { id: uid(), company_id: 'c1', member_id: 'm2', period_type: 'month', due_date: monthEnd,
+    title: '請求書発行フローの自動化', body: 'テンプレート整備まで', status: 'open',
+    self_review: null, reviewed_at: null, created_at: at(dayOffset(-10), 9) },
+  { id: uid(), company_id: 'c1', member_id: 'm2', period_type: 'week', due_date: dayOffset(-3),
+    title: '顧客リストの整理を完了する', body: null, status: 'done',
+    self_review: '予定通り完了。重複データの削除も併せて実施した。', reviewed_at: at(dayOffset(-3), 18), created_at: at(dayOffset(-8), 9) },
+]
+const goal_evaluations: GoalEvaluation[] = [
+  { id: uid(), goal_id: goals[3].id, evaluator_member_id: 'm1', rating: 5,
+    comment: '期日前倒しで完了。データ品質の改善まで踏み込んでいて素晴らしい。', created_at: at(dayOffset(-2), 10) },
+]
+const feedback_posts: FeedbackPost[] = [
+  { id: uid(), company_id: 'c1', target_member_id: 'm2', author_member_id: 'm1',
+    body: '取引先対応が丁寧で助かっています。先方からも好評でした。', created_at: at(dayOffset(-4), 15) },
+  { id: uid(), company_id: 'c1', target_member_id: 'm1', author_member_id: 'm3',
+    body: '定例MTGの進行がわかりやすいです。議事録の共有もありがとうございます。', created_at: at(dayOffset(-2), 17) },
+]
+
 const tables: Record<string, Record<string, unknown>[]> = {
   companies: [COMPANY],
   members: DEMO_MEMBERS as unknown as Record<string, unknown>[],
@@ -112,6 +139,9 @@ const tables: Record<string, Record<string, unknown>[]> = {
   daily_reports: daily_reports as unknown as Record<string, unknown>[],
   schedules: schedules as unknown as Record<string, unknown>[],
   invoices: invoices as unknown as Record<string, unknown>[],
+  goals: goals as unknown as Record<string, unknown>[],
+  goal_evaluations: goal_evaluations as unknown as Record<string, unknown>[],
+  feedback_posts: feedback_posts as unknown as Record<string, unknown>[],
 }
 
 type Row = Record<string, unknown>

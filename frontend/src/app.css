@@ -627,3 +627,25 @@ tr:last-child td { border-bottom: none; }
 }
 .pt-break-del:hover { color: var(--danger); background: var(--danger-bg); }
 .plan-table .pt-break-add::placeholder { color: var(--text-faint); }
+
+/* 個人目標・フィードバック */
+.goal-item {
+  padding: 12px 14px; border-radius: 12px; background: var(--surface-2);
+  border: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px;
+}
+.goal-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.goal-when { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.goal-delete { margin-left: auto; }
+.goal-title { font-size: 15px; font-weight: 700; }
+.goal-body { font-size: 13px; color: var(--muted); white-space: pre-wrap; }
+.goal-review, .goal-eval {
+  font-size: 13px; background: #fff; border: 1px solid var(--line);
+  border-radius: 10px; padding: 8px 10px; white-space: pre-wrap;
+}
+.goal-review-label {
+  display: inline-block; margin-right: 8px; font-size: 11px; font-weight: 700;
+  color: var(--muted);
+}
+.goal-stars { color: #e8a200; margin-right: 8px; letter-spacing: 1px; }
+.goal-review-form { display: flex; flex-direction: column; gap: 8px; }
+.goal-form { margin-bottom: 12px; }

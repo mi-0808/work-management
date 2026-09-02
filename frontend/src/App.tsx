@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isProviderEnabled, supabase, today } from './lib/supabase'
 import { DEMO, DEMO_MEMBERS } from './lib/demo'
-import type { Attendance, Break, Invoice, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
+import type { Attendance, Break, FeedbackPost, Goal, GoalEvaluation, Invoice, Member, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
 
-type Tab = 'home' | 'report' | 'schedule' | 'members' | 'profile'
+type Tab = 'home' | 'report' | 'schedule' | 'profile'
 
 const fmtTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'
@@ -1639,7 +1639,7 @@ const AVATAR_COLORS = ['#007f66', '#2F8CFF', '#7c5cd6', '#0f8a7e', '#c2447e', '#
 
 const BLANK_INVITE = { name: '', email: '', work_start: '09:00', work_end: '18:00' }
 
-function Members({ me }: { me: Member }) {
+function Members({ me, onOpenProfile }: { me: Member; onOpenProfile?: (m: Member) => void }) {
   const [members, setMembers] = useState<Member[]>([])
   const [code, setCode] = useState('')
   const [copied, setCopied] = useState(false)
@@ -1761,6 +1761,9 @@ function Members({ me }: { me: Member }) {
                   <span className="badge badge-gray">{m.role === 'admin' ? '管理者' : '一般'}</span>
                 )}
                 {m.status === 'invited' && <span className="badge badge-yellow">招待中・未参加</span>}
+                {onOpenProfile && m.id !== me.id && m.status === 'active' && (
+                  <button className="btn-chip" onClick={() => onOpenProfile(m)}>プロフィール</button>
+                )}
               </div>
             </div>
             <div className="m-hours">
@@ -2098,6 +2101,384 @@ function Profile({ me, onRename }: { me: Member; onRename: (name: string) => voi
   )
 }
 
+/* ---------- 個人目標（稼働表とは別の、個人の目標管理） ---------- */
+const fmtMd = (d: string) => {
+  const dt = new Date(d + 'T00:00:00')
+  return `${dt.getMonth() + 1}/${dt.getDate()}`
+}
+// 今週=今度の日曜、今月=月末
+const weekEnd = () => {
+  const d = new Date()
+  d.setDate(d.getDate() + ((7 - d.getDay()) % 7))
+  return d.toLocaleDateString('sv-SE')
+}
+const monthEnd = () => {
+  const d = new Date()
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).toLocaleDateString('sv-SE')
+}
+
+const BLANK_GOAL = { title: '', body: '', period: 'week' as Goal['period_type'], due: '' }
+const PERIODS: { key: Goal['period_type']; label: string }[] = [
+  { key: 'week', label: '今週' },
+  { key: 'month', label: '今月' },
+  { key: 'custom', label: '期日指定' },
+]
+
+function GoalsCard({ member, me, names, canEvaluate }: {
+  member: Member; me: Member; names: Record<string, string>; canEvaluate?: boolean
+}) {
+  const isSelf = member.id === me.id
+  const [goals, setGoals] = useState<Goal[]>([])
+  const [evals, setEvals] = useState<Record<string, GoalEvaluation[]>>({})
+  const [open, setOpen] = useState(false)
+  const [form, setForm] = useState(BLANK_GOAL)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [reviewFor, setReviewFor] = useState<string | null>(null)
+  const [reviewText, setReviewText] = useState('')
+  const [evalFor, setEvalFor] = useState<string | null>(null)
+  const [evalRating, setEvalRating] = useState(0)
+  const [evalText, setEvalText] = useState('')
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from('goals').select('*')
+      .eq('member_id', member.id).order('due_date')
+    const rows = (data as Goal[] | null) ?? []
+    setGoals(rows)
+    const pairs = await Promise.all(rows.map(async (g) => {
+      const { data: ev } = await supabase.from('goal_evaluations').select('*')
+        .eq('goal_id', g.id).order('created_at')
+      return [g.id, (ev as GoalEvaluation[] | null) ?? []] as const
+    }))
+    setEvals(Object.fromEntries(pairs))
+  }, [member.id])
+
+  useEffect(() => { load() }, [load])
+
+  const dueDate = form.period === 'week' ? weekEnd() : form.period === 'month' ? monthEnd() : form.due
+
+  const add = async () => {
+    setErr(''); setBusy(true)
+    const { error } = await supabase.from('goals').insert({
+      company_id: member.company_id, member_id: member.id,
+      period_type: form.period, due_date: dueDate,
+      title: form.title, body: form.body || null,
+      status: 'open', self_review: null, reviewed_at: null,
+      created_at: new Date().toISOString(),
+    })
+    setBusy(false)
+    if (error) return setErr(`目標を追加できませんでした（${error.message}）`)
+    setForm(BLANK_GOAL)
+    setOpen(false)
+    load()
+  }
+
+  const removeGoal = async (g: Goal) => {
+    if (!confirm(`「${g.title}」を削除しますか？`)) return
+    const { error } = await supabase.from('goals').delete().eq('id', g.id)
+    if (error) return setErr('削除できませんでした')
+    load()
+  }
+
+  const saveReview = async (g: Goal) => {
+    setErr('')
+    const { error } = await supabase.from('goals')
+      .update({ self_review: reviewText, reviewed_at: new Date().toISOString(), status: 'done' })
+      .eq('id', g.id)
+    if (error) return setErr('振り返りを保存できませんでした')
+    setReviewFor(null); setReviewText('')
+    load()
+  }
+
+  const submitEval = async (g: Goal) => {
+    setErr('')
+    const { error } = await supabase.from('goal_evaluations').insert({
+      goal_id: g.id, evaluator_member_id: me.id,
+      rating: evalRating || null, comment: evalText,
+      created_at: new Date().toISOString(),
+    })
+    if (error) return setErr(`評価を投稿できませんでした（${error.message}）`)
+    setEvalFor(null); setEvalRating(0); setEvalText('')
+    load()
+  }
+
+  const overdue = (g: Goal) => g.status === 'open' && g.due_date <= today()
+
+  return (
+    <div className="card">
+      <h2>
+        目標 <span className="tag">今週・今月と中長期</span>
+        {isSelf && !open && <button className="h2-action" onClick={() => setOpen(true)}>＋ 目標を追加</button>}
+      </h2>
+
+      {isSelf && open && (
+        <div className="goal-form">
+          <label htmlFor="gl-title">目標</label>
+          <input id="gl-title" type="text" placeholder="例: 新規案件の見積もりを3件出す" autoFocus
+            value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+          <label htmlFor="gl-body">補足（任意）</label>
+          <input id="gl-body" type="text" placeholder="達成基準やメモ"
+            value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} />
+          <label>期間</label>
+          <div className="seg-row" role="tablist" aria-label="目標の期間">
+            {PERIODS.map((p) => (
+              <button key={p.key} role="tab" aria-selected={form.period === p.key}
+                className={`preset-chip ${form.period === p.key ? 'sel' : ''}`}
+                onClick={() => setForm({ ...form, period: p.key })}>{p.label}</button>
+            ))}
+            {form.period === 'custom' && (
+              <input type="date" aria-label="期日" value={form.due}
+                onChange={(e) => setForm({ ...form, due: e.target.value })} />
+            )}
+          </div>
+          <div className="notice">期日: {dueDate ? fmtMd(dueDate) : '未設定'}（今週=日曜、今月=月末。年末や年度末は期日指定で）</div>
+          <div className="form-actions">
+            <button className="btn-primary" style={{ margin: 0 }}
+              disabled={!form.title || !dueDate || busy} onClick={add}>
+              {busy ? '追加中…' : '追加'}
+            </button>
+            <button className="btn-outline" onClick={() => { setOpen(false); setErr('') }}>キャンセル</button>
+          </div>
+        </div>
+      )}
+
+      {goals.length === 0 && !open && (
+        <div className="notice">{isSelf ? 'まだ目標がありません。「＋ 目標を追加」から設定できます' : 'まだ目標がありません'}</div>
+      )}
+
+      <div className="list">
+        {goals.map((g) => (
+          <div key={g.id} className="goal-item">
+            <div className="goal-head">
+              <span className="badge badge-blue">
+                {g.period_type === 'week' ? '今週' : g.period_type === 'month' ? '今月' : '中長期'} · {fmtMd(g.due_date)}まで
+              </span>
+              {g.status === 'done' && <span className="badge badge-gray">達成・振り返り済み</span>}
+              {g.status === 'dropped' && <span className="badge badge-gray">取り下げ</span>}
+              {overdue(g) && <span className="badge badge-yellow">期日到来・振り返り待ち</span>}
+              {isSelf && g.status === 'open' && (
+                <button className="edit-delete goal-delete" onClick={() => removeGoal(g)}>削除</button>
+              )}
+            </div>
+            <div className="goal-title">{g.title}</div>
+            {g.body && <div className="goal-body">{g.body}</div>}
+
+            {g.self_review && (
+              <div className="goal-review">
+                <span className="goal-review-label">振り返り</span>{g.self_review}
+              </div>
+            )}
+            {isSelf && !g.self_review && overdue(g) && (
+              reviewFor === g.id ? (
+                <div className="goal-review-form">
+                  <textarea rows={3} placeholder="達成度や学びを書いて振り返りましょう"
+                    value={reviewText} onChange={(e) => setReviewText(e.target.value)} />
+                  <div className="form-actions">
+                    <button className="btn-primary" style={{ margin: 0 }}
+                      disabled={!reviewText} onClick={() => saveReview(g)}>振り返りを保存</button>
+                    <button className="btn-outline" onClick={() => { setReviewFor(null); setReviewText('') }}>キャンセル</button>
+                  </div>
+                </div>
+              ) : (
+                <button className="btn-outline" onClick={() => { setReviewFor(g.id); setReviewText('') }}>振り返りを書く</button>
+              )
+            )}
+
+            {(evals[g.id] ?? []).map((ev) => (
+              <div key={ev.id} className="goal-eval">
+                <span className="goal-review-label">{names[ev.evaluator_member_id] ?? '—'}の評価</span>
+                {ev.rating != null && <span className="goal-stars">{'★'.repeat(ev.rating)}{'☆'.repeat(5 - ev.rating)}</span>}
+                {ev.comment}
+              </div>
+            ))}
+            {canEvaluate && (
+              evalFor === g.id ? (
+                <div className="goal-review-form">
+                  <div className="seg-row" role="radiogroup" aria-label="評価（5段階）">
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <button key={n} role="radio" aria-checked={evalRating === n}
+                        className={`preset-chip ${evalRating === n ? 'sel' : ''}`}
+                        onClick={() => setEvalRating(evalRating === n ? 0 : n)}>★{n}</button>
+                    ))}
+                  </div>
+                  <textarea rows={3} placeholder="評価コメント（本人と会社のメンバーに公開されます）"
+                    value={evalText} onChange={(e) => setEvalText(e.target.value)} />
+                  <div className="form-actions">
+                    <button className="btn-primary" style={{ margin: 0 }}
+                      disabled={!evalText} onClick={() => submitEval(g)}>評価を投稿</button>
+                    <button className="btn-outline" onClick={() => { setEvalFor(null); setEvalRating(0); setEvalText('') }}>キャンセル</button>
+                  </div>
+                </div>
+              ) : (
+                <button className="btn-outline" onClick={() => { setEvalFor(g.id); setEvalRating(0); setEvalText('') }}>評価する</button>
+              )
+            )}
+          </div>
+        ))}
+      </div>
+      {err && <div className="notice warn">{err}</div>}
+    </div>
+  )
+}
+
+/* ---------- フィードバック（プロフィールへの公開投稿） ---------- */
+function FeedbackCard({ target, me, names }: { target: Member; me: Member; names: Record<string, string> }) {
+  const [posts, setPosts] = useState<FeedbackPost[]>([])
+  const [body, setBody] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const isSelf = target.id === me.id
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from('feedback_posts').select('*')
+      .eq('target_member_id', target.id).order('created_at', { ascending: false })
+    setPosts((data as FeedbackPost[] | null) ?? [])
+  }, [target.id])
+
+  useEffect(() => { load() }, [load])
+
+  const post = async () => {
+    setErr(''); setBusy(true)
+    const { error } = await supabase.from('feedback_posts').insert({
+      company_id: target.company_id, target_member_id: target.id,
+      author_member_id: me.id, body, created_at: new Date().toISOString(),
+    })
+    setBusy(false)
+    if (error) return setErr(`投稿できませんでした（${error.message}）`)
+    setBody('')
+    load()
+  }
+
+  const remove = async (p: FeedbackPost) => {
+    if (!confirm('この投稿を削除しますか？')) return
+    const { error } = await supabase.from('feedback_posts').delete().eq('id', p.id)
+    if (error) return setErr('削除できませんでした')
+    load()
+  }
+
+  return (
+    <div className="card">
+      <h2>フィードバック <span className="tag">会社のメンバーに公開</span></h2>
+      {!isSelf && (
+        <>
+          <textarea rows={3} placeholder={`${target.name}さんへのフィードバックを書く`}
+            value={body} onChange={(e) => setBody(e.target.value)} />
+          <div className="form-actions">
+            <button className="btn-primary" style={{ margin: 0 }} disabled={!body || busy} onClick={post}>
+              {busy ? '投稿中…' : '投稿'}
+            </button>
+          </div>
+        </>
+      )}
+      {posts.length === 0 && (
+        <div className="notice">{isSelf ? 'まだフィードバックはありません。届くとここに表示されます' : 'まだフィードバックはありません'}</div>
+      )}
+      <div className="list">
+        {posts.map((p) => (
+          <div key={p.id} className="goal-item">
+            <div className="goal-head">
+              <span className="badge badge-gray">{names[p.author_member_id] ?? '—'}</span>
+              <span className="goal-when">{fmtMd(p.created_at.slice(0, 10))}</span>
+              {p.author_member_id === me.id && (
+                <button className="edit-delete goal-delete" onClick={() => remove(p)}>削除</button>
+              )}
+            </div>
+            <div className="goal-body">{p.body}</div>
+          </div>
+        ))}
+      </div>
+      {err && <div className="notice warn">{err}</div>}
+    </div>
+  )
+}
+
+/* ---------- 他メンバーのプロフィール閲覧（目標＋フィードバック。管理者は評価も） ---------- */
+function MemberProfileView({ member, me, names, onBack }: {
+  member: Member; me: Member; names: Record<string, string>; onBack: () => void
+}) {
+  return (
+    <>
+      <div className="card">
+        <div className="profile-head">
+          <div className="m-avatar profile-avatar">{member.name[0]}</div>
+          <div>
+            <div className="profile-name">{member.name}</div>
+            <div className="m-mail">{member.email}</div>
+            <div className="account-badges">
+              <span className="badge badge-gray">{member.role === 'admin' ? '管理者' : '一般'}</span>
+            </div>
+          </div>
+        </div>
+        <div className="form-actions">
+          <button className="btn-outline" onClick={onBack}>← 戻る</button>
+        </div>
+      </div>
+      <GoalsCard member={member} me={me} names={names} canEvaluate={me.role === 'admin'} />
+      <FeedbackCard target={member} me={me} names={names} />
+    </>
+  )
+}
+
+/* ---------- プロフィールタブ（自分／管理者は組織管理と切り替え） ---------- */
+function ProfilePage({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
+  const isAdmin = me.role === 'admin'
+  const [view, setView] = useState<'mine' | 'org'>('mine')
+  const [members, setMembers] = useState<Member[]>([])
+  const [viewing, setViewing] = useState<Member | null>(null)
+
+  useEffect(() => {
+    supabase.from('members').select('*').eq('company_id', me.company_id).order('created_at')
+      .then(({ data }) => setMembers((data as Member[] | null) ?? []))
+  }, [me.company_id])
+
+  const names = Object.fromEntries(members.map((m) => [m.id, m.name]))
+  const colleagues = members.filter((m) => m.id !== me.id && m.status === 'active')
+
+  if (viewing) {
+    return <MemberProfileView member={viewing} me={me} names={names} onBack={() => setViewing(null)} />
+  }
+
+  return (
+    <>
+      {isAdmin && (
+        <div className="seg-row" role="tablist" aria-label="プロフィールの切り替え">
+          <button role="tab" aria-selected={view === 'mine'}
+            className={`preset-chip ${view === 'mine' ? 'sel' : ''}`}
+            onClick={() => setView('mine')}>自分</button>
+          <button role="tab" aria-selected={view === 'org'}
+            className={`preset-chip ${view === 'org' ? 'sel' : ''}`}
+            onClick={() => setView('org')}>組織管理</button>
+        </div>
+      )}
+      {isAdmin && view === 'org' ? (
+        <Members me={me} onOpenProfile={setViewing} />
+      ) : (
+        <>
+          <Profile me={me} onRename={onRename} />
+          <GoalsCard member={me} me={me} names={names} />
+          <FeedbackCard target={me} me={me} names={names} />
+          {colleagues.length > 0 && (
+            <div className="card">
+              <h2>メンバー <span className="tag">目標を見る・フィードバックを送る</span></h2>
+              <div className="list">
+                {colleagues.map((m, i) => (
+                  <div key={m.id} className="list-item">
+                    <div className="m-avatar member-av" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
+                      {m.name[0]}
+                    </div>
+                    <div className="title">{m.name}</div>
+                    <button className="btn-outline" onClick={() => setViewing(m)}>プロフィール</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  )
+}
+
 /* ---------- App ---------- */
 const ICONS: Record<Tab, React.ReactNode> = {
   home: (
@@ -2115,12 +2496,6 @@ const ICONS: Record<Tab, React.ReactNode> = {
       <rect x="3" y="5" width="18" height="17" rx="2" /><path d="M3 10h18M8 2v5M16 2v5" />
     </svg>
   ),
-  members: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5" />
-      <path d="M16 5.5a3.5 3.5 0 0 1 0 6.6" /><path d="M17.5 15.5c2.2.6 3.6 2.1 4 4.5" />
-    </svg>
-  ),
   profile: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" />
@@ -2128,14 +2503,12 @@ const ICONS: Record<Tab, React.ReactNode> = {
   ),
 }
 
-// 管理者は名簿、一般はプロフィールを4つ目に置く（管理者はアバターからプロフィールへ）
-const tabsFor = (role: Member['role']): { key: Tab; label: string }[] => [
+// 4つ目は全員プロフィール（管理者はプロフィール内の上タブで組織管理＝旧名簿へ）
+const tabsFor = (_role: Member['role']): { key: Tab; label: string }[] => [
   { key: 'home', label: 'ホーム' },
   { key: 'report', label: '稼働表' },
   { key: 'schedule', label: 'カレンダー' },
-  role === 'admin'
-    ? { key: 'members', label: '名簿' }
-    : { key: 'profile', label: 'プロフィール' },
+  { key: 'profile', label: 'プロフィール' },
 ]
 
 /* ---------- デモ（/demo・データはインメモリ） ---------- */
@@ -2176,8 +2549,7 @@ function DemoApp() {
       {tab === 'home' && <Home key={me.id} me={me} />}
       {tab === 'report' && <Report key={me.id} me={me} />}
       {tab === 'schedule' && <Schedule key={me.id} me={me} />}
-      {tab === 'members' && <Members key={me.id} me={me} />}
-      {tab === 'profile' && <Profile key={me.id} me={me} onRename={(name) => setMe({ ...me, name })} />}
+      {tab === 'profile' && <ProfilePage key={me.id} me={me} onRename={(name) => setMe({ ...me, name })} />}
       <nav className="tabbar">
         {tabsFor(me.role).map((t) => (
           <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => setTab(t.key)}>
@@ -2275,8 +2647,7 @@ function App() {
             {tab === 'home' && <Home me={me} />}
             {tab === 'report' && <Report me={me} />}
             {tab === 'schedule' && <Schedule me={me} />}
-            {tab === 'members' && <Members me={me} />}
-            {tab === 'profile' && <Profile me={me} onRename={(name) => setMe({ ...me, name })} />}
+            {tab === 'profile' && <ProfilePage me={me} onRename={(name) => setMe({ ...me, name })} />}
             <nav className="tabbar">
               {tabsFor(me.role).map((t) => (
                 <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => setTab(t.key)}>
