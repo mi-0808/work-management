@@ -732,3 +732,9 @@ tr:last-child td { border-bottom: none; }
   padding: 0 2px; margin: 4px 0 24px;
 }
 .card.card-plain .plan-table-wrap, .card.card-plain .list { background: var(--card); }
+
+/* カレンダー: 目標・ネクストアクションの期日表示 */
+.dot-task { background: var(--warn); }
+.due-list { margin: 0 0 10px; display: flex; flex-direction: column; gap: 6px; }
+.due-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.due-row .due-title { font-weight: 600; }

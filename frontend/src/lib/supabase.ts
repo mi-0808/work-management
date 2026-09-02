@@ -111,6 +111,7 @@ export type Goal = {
   status: 'open' | 'active' | 'done' | 'dropped' // open=未着手, active=実行中
   self_review: string | null
   reviewed_at: string | null
+  google_event_id: string | null
   created_at: string
 }
 
@@ -123,6 +124,7 @@ export type NextAction = {
   due_date: string | null
   note: string | null
   done_at: string | null
+  google_event_id: string | null
   created_at: string
 }
 

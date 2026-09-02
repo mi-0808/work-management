@@ -83,6 +83,10 @@ const gcalSync = (schedule_id: string, action: 'upsert' | 'delete' = 'upsert') =
   supabase.functions.invoke('gcal-sync', { body: { schedule_id, action } }).catch(() => {})
 }
 
+// 目標・ネクストアクションの期日をGoogleカレンダーの終日イベントへ同期（fire-and-forget）
+const dueSync = (kind: 'goal' | 'next_action', id: string, action: 'upsert' | 'delete' = 'upsert') =>
+  supabase.functions.invoke('due-sync', { body: { kind, id, action } }).catch(() => {})
+
 // Meetバッジ。同期済みでリンクがあればそのまま参加できる
 const MeetBadge = ({ e }: { e: ScheduleRow }) => !e.with_meet ? null : e.meet_url
   ? <a className="badge badge-blue" href={e.meet_url} target="_blank" rel="noreferrer">Meet</a>
@@ -1231,6 +1235,9 @@ function Schedule({ me }: { me: Member }) {
   const year = base.getFullYear()
   const month = base.getMonth() // 0-indexed
   const [events, setEvents] = useState<ScheduleRow[]>([])
+  // 自分の目標・ネクストアクションの期日をカレンダーに重ねて表示する
+  const [dueGoals, setDueGoals] = useState<Goal[]>([])
+  const [dueActions, setDueActions] = useState<NextAction[]>([])
   const [selDay, setSelDay] = useState(base.getDate())
   const [draft, setDraft] = useState<{ start: string; end: string } | null>(null)
   const [title, setTitle] = useState('')
@@ -1247,11 +1254,21 @@ function Schedule({ me }: { me: Member }) {
   const load = useCallback(async () => {
     const from = new Date(year, month, 1).toISOString()
     const to = new Date(year, month + 1, 1).toISOString()
-    const { data } = await supabase.from('schedules').select('*')
-      .gte('starts_at', from).lt('starts_at', to).order('starts_at')
+    const dFrom = `${year}-${String(month + 1).padStart(2, '0')}-01`
+    const dTo = new Date(year, month + 1, 1).toLocaleDateString('sv-SE')
+    const [{ data }, { data: gs }, { data: nas }] = await Promise.all([
+      supabase.from('schedules').select('*')
+        .gte('starts_at', from).lt('starts_at', to).order('starts_at'),
+      supabase.from('goals').select('*')
+        .eq('member_id', me.id).gte('due_date', dFrom).lt('due_date', dTo).order('due_date'),
+      supabase.from('next_actions').select('*')
+        .eq('member_id', me.id).gte('due_date', dFrom).lt('due_date', dTo).order('due_date'),
+    ])
     // 却下された提案は表示しない
     setEvents((data ?? []).filter((e: ScheduleRow) => e.status !== 'declined'))
-  }, [year, month])
+    setDueGoals(((gs as Goal[] | null) ?? []).filter((g) => g.status !== 'dropped'))
+    setDueActions(((nas as NextAction[] | null) ?? []))
+  }, [year, month, me.id])
 
   useEffect(() => { load() }, [load])
 
@@ -1277,6 +1294,12 @@ function Schedule({ me }: { me: Member }) {
 
   const dayEvents = events.filter((e) => evDay(e) === selDay)
   const otherEvents = dayEvents.filter((e) => !isMine(e))
+  const dueDay = (d: string) => Number(d.slice(8, 10))
+  const dayDueGoals = dueGoals.filter((g) => dueDay(g.due_date) === selDay)
+  const dayDueActions = dueActions.filter((a) => a.due_date && dueDay(a.due_date) === selDay)
+  const hasDue = (d: number) =>
+    dueGoals.some((g) => dueDay(g.due_date) === d) ||
+    dueActions.some((a) => a.due_date && dueDay(a.due_date) === d)
 
   const conflict =
     draft &&
@@ -1374,6 +1397,7 @@ function Schedule({ me }: { me: Member }) {
                   {events.filter((e) => evDay(e) === d).slice(0, 3).map((e, j) => (
                     <i key={j} className={isMine(e) ? 'dot-me' : 'dot-boss'} />
                   ))}
+                  {hasDue(d) && <i className="dot-task" />}
                 </span>
               </button>
             )
@@ -1386,7 +1410,26 @@ function Schedule({ me }: { me: Member }) {
         <div className="tl-legend">
           <span><i className="dot-me" /> 自分</span>
           <span><i className="dot-boss" /> 他のメンバー・全社</span>
+          <span><i className="dot-task" /> 目標・やることの期日</span>
         </div>
+        {(dayDueGoals.length > 0 || dayDueActions.length > 0) && (
+          <div className="due-list">
+            {dayDueGoals.map((g) => (
+              <div key={g.id} className="due-row">
+                <span className="badge badge-yellow">目標の期日</span>
+                <span className="due-title">{g.title}</span>
+                {g.status === 'done' && <span className="badge badge-blue">達成</span>}
+              </div>
+            ))}
+            {dayDueActions.map((a) => (
+              <div key={a.id} className="due-row">
+                <span className="badge badge-gray">やること</span>
+                <span className="due-title">{a.title}</span>
+                {a.status === 'done' && <span className="badge badge-blue">完了</span>}
+              </div>
+            ))}
+          </div>
+        )}
         <div className="timeline"
           onPointerDown={dragStart} onPointerMove={dragMove}
           onPointerUp={dragEnd} onPointerLeave={dragEnd}>
@@ -2172,15 +2215,16 @@ function GoalsCard({ member, me, names, canEvaluate }: {
 
   const add = async () => {
     setErr(''); setBusy(true)
-    const { error } = await supabase.from('goals').insert({
+    const { data: created, error } = await supabase.from('goals').insert({
       company_id: member.company_id, member_id: member.id,
       period_type: form.period, due_date: dueDate,
       title: form.title, body: form.body || null,
-      status: 'open', self_review: null, reviewed_at: null,
+      status: 'open', self_review: null, reviewed_at: null, google_event_id: null,
       created_at: new Date().toISOString(),
-    })
+    }).select('id').single()
     setBusy(false)
     if (error) return setErr(`目標を追加できませんでした（${error.message}）`)
+    if (created) dueSync('goal', (created as { id: string }).id)
     setForm(BLANK_GOAL)
     setOpen(false)
     load()
@@ -2189,6 +2233,7 @@ function GoalsCard({ member, me, names, canEvaluate }: {
   const removeGoal = async (g: Goal) => {
     setMenuFor(null)
     if (!confirm(`「${g.title}」を削除しますか？`)) return
+    await dueSync('goal', g.id, 'delete') // 行が消える前にカレンダー側のイベントを消す
     const { error } = await supabase.from('goals').delete().eq('id', g.id)
     if (error) return setErr('削除できませんでした')
     load()
@@ -2213,6 +2258,7 @@ function GoalsCard({ member, me, names, canEvaluate }: {
       .update({ title: editForm.title, body: editForm.body || null, period_type: editForm.period, due_date: due })
       .eq('id', g.id)
     if (error) return setErr(`保存できませんでした（${error.message}）`)
+    dueSync('goal', g.id)
     setEditFor(null)
     load()
   }
@@ -2434,13 +2480,16 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
     flash()
   }
 
-  const changeStatus = (r: NextAction, status: NextAction['status']) => {
+  const changeStatus = async (r: NextAction, status: NextAction['status']) => {
     const p = { status, done_at: status === 'done' ? new Date().toISOString() : null }
-    patch(r.id, p); save(r.id, p)
+    patch(r.id, p); await save(r.id, p)
+    // 完了したらカレンダーから消し、戻したら再同期する
+    dueSync('next_action', r.id, status === 'done' ? 'delete' : 'upsert')
   }
-  const changeDue = (r: NextAction, due: string) => {
+  const changeDue = async (r: NextAction, due: string) => {
     const p = { due_date: due || null }
-    patch(r.id, p); save(r.id, p)
+    patch(r.id, p); await save(r.id, p)
+    dueSync('next_action', r.id)
   }
   // 内容・メモは入力停止後に自動保存（モバイルではblurが起きないままタブ移動しがちなため）
   const patchText = (r: NextAction, field: 'title' | 'note', value: string) => {
@@ -2466,7 +2515,7 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
     setErr('')
     const { error } = await supabase.from('next_actions').insert({
       company_id: member.company_id, member_id: member.id,
-      title, status: 'todo', due_date: null, note: null, done_at: null,
+      title, status: 'todo', due_date: null, note: null, done_at: null, google_event_id: null,
       created_at: new Date().toISOString(),
     })
     if (error) return setErr(`追加できませんでした（${error.message}）`)
@@ -2475,6 +2524,7 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
   }
 
   const remove = async (r: NextAction) => {
+    if (r.google_event_id) await dueSync('next_action', r.id, 'delete') // 行が消える前にイベントを消す
     const { error } = await supabase.from('next_actions').delete().eq('id', r.id)
     if (error) return setErr('削除できませんでした')
     load()
