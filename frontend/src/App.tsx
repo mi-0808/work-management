@@ -2245,7 +2245,7 @@ function GoalsCard({ member, me, names, canEvaluate }: {
     overdue(g) ? 'badge-yellow' : g.status === 'active' ? 'badge-green' : 'badge-gray'
 
   return (
-    <div className="card">
+    <div className="card card-plain">
       <h2>
         目標 <span className="tag">今週・今月と中長期</span>
         {isSelf && !open && <button className="h2-action" onClick={() => setOpen(true)}>＋ 目標を追加</button>}
@@ -2485,7 +2485,7 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
   if (!isSelf && rows.length === 0) return null
 
   return (
-    <div className="card">
+    <div className="card card-plain">
       <h2>
         ネクストアクション{' '}
         <span className="tag">{rows.length > 0 ? `${doneCount}/${rows.length} 完了` : '直近のやること'}</span>

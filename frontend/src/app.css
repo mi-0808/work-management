@@ -725,3 +725,10 @@ tr:last-child td { border-bottom: none; }
   opacity: 0; border: none; padding: 0; cursor: pointer;
 }
 .na-table .na-due { text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* 見出し＋中身だけのセクション（外枠カードなし）。中身の表を広く見せる */
+.card.card-plain {
+  background: none; border: none; box-shadow: none;
+  padding: 0 2px; margin: 4px 0 24px;
+}
+.card.card-plain .plan-table-wrap, .card.card-plain .list { background: var(--card); }
