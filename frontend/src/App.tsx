@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isProviderEnabled, supabase, today } from './lib/supabase'
 import { DEMO, DEMO_MEMBERS } from './lib/demo'
-import type { Attendance, Break, FeedbackPost, Goal, GoalEvaluation, Invoice, Member, NextAction, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
+import type { Attendance, Break, FeedbackPost, Goal, GoalEvaluation, Invoice, Member, MoneyExpense, MoneyProfile, MoneyRecurring, NextAction, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
 
 type Tab = 'home' | 'report' | 'schedule' | 'profile'
 
@@ -1676,6 +1678,704 @@ function InvoiceView({ inv, memberName, onClose }: { inv: Invoice; memberName: s
   )
 }
 
+/* ---------- お金管理モード（プロフィールから入る全画面モード） ---------- */
+const STANCE_LABELS: Record<MoneyProfile['stance'], string> = {
+  president: '社長（会社代表）',
+  sole_proprietor: '個人事業主',
+  part_time: 'アルバイト',
+  employee: '会社員',
+}
+
+// 住所→緯度経度（OpenStreetMap Nominatim。失敗してもnullで進む）
+const geocode = async (addr: string): Promise<{ lat: number; lng: number } | null> => {
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(addr)}`)
+    const list = await res.json()
+    return list?.[0] ? { lat: Number(list[0].lat), lng: Number(list[0].lon) } : null
+  } catch {
+    return null
+  }
+}
+
+// 支出マップ（緯度経度のある経費をピン表示）
+function ExpenseMap({ rows }: { rows: MoneyExpense[] }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const map = L.map(el).setView([rows[0]!.lat!, rows[0]!.lng!], 13)
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+    }).addTo(map)
+    const group = L.featureGroup(rows.map((e) =>
+      L.circleMarker([e.lat!, e.lng!], { radius: 9, color: '#00654f', fillColor: '#00654f', fillOpacity: .7 })
+        .bindPopup(`${e.occurred_on.slice(5).replace('-', '/')} ${e.store ?? e.label} ${yen(e.amount)}`)
+    )).addTo(map)
+    map.fitBounds(group.getBounds().pad(0.3))
+    return () => { map.remove() }
+  }, [rows])
+  return <div ref={ref} className="money-map" />
+}
+
+function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
+  const [profile, setProfile] = useState<MoneyProfile | null>(null)
+  const [loaded, setLoaded] = useState(false)
+  const [picking, setPicking] = useState(false)
+  const [stance, setStance] = useState<MoneyProfile['stance']>('employee')
+  const [expenses, setExpenses] = useState<MoneyExpense[]>([])
+  const [invs, setInvs] = useState<Invoice[]>([])
+  const [names, setNames] = useState<Record<string, string>>({})
+  const [month, setMonth] = useState(today().slice(0, 7))
+  const [err, setErr] = useState('')
+  // 経費フォーム
+  const [date, setDate] = useState(today())
+  const [label, setLabel] = useState('')
+  const [amount, setAmount] = useState('')
+  const [file, setFile] = useState<File | null>(null)
+  const [linkInv, setLinkInv] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const isPresident = profile?.stance === 'president' && me.role === 'admin'
+  // 経費の区分はフォームのボタンで切替（初期値は立場から: 個人事業主は個人の帳簿、それ以外は会社提出）
+  const [scope, setScope] = useState<MoneyExpense['scope']>('company')
+  const [calDay, setCalDay] = useState('') // カレンダーで選択中の日（YYYY-MM-DD）
+  const [menuOpen, setMenuOpen] = useState(false) // 経費カードの☰メニュー
+  const [ocr, setOcr] = useState(false) // レシート読み取り中
+  const [ocrMeta, setOcrMeta] = useState<{ store: string | null; address: string | null }>({ store: null, address: null })
+  const [recurring, setRecurring] = useState<MoneyRecurring[]>([])
+  const [budget, setBudget] = useState<number | null>(null) // 会社の月間経費予算
+  // 固定費フォーム
+  const [recLabel, setRecLabel] = useState('')
+  const [recAmount, setRecAmount] = useState('')
+  const [recDay, setRecDay] = useState('1')
+
+  const load = useCallback(async () => {
+    const { data: p } = await supabase.from('money_profiles').select('*')
+      .eq('member_id', me.id).maybeSingle()
+    setProfile((p as MoneyProfile | null) ?? null)
+    setLoaded(true)
+    if (!p) return
+    setScope((p as MoneyProfile).stance === 'sole_proprietor' ? 'personal' : 'company')
+    const president = (p as MoneyProfile).stance === 'president' && me.role === 'admin'
+    const [{ data: exps }, { data: invRows }, { data: rows }, { data: recRows }, { data: comp }] = await Promise.all([
+      // RLSで見える範囲＝自分の全経費＋（管理者なら）会社提出分
+      supabase.from('money_expenses').select('*').order('occurred_on', { ascending: false }),
+      president
+        ? supabase.from('invoices').select('*').order('issued_at', { ascending: false })
+        : supabase.from('invoices').select('*').eq('member_id', me.id).order('issued_at', { ascending: false }),
+      supabase.from('members').select('id, name').eq('company_id', me.company_id),
+      supabase.from('money_recurring').select('*').eq('member_id', me.id).order('created_at'),
+      supabase.from('companies').select('expense_budget').eq('id', me.company_id).maybeSingle(),
+    ])
+    const memberRows = (rows as Pick<Member, 'id' | 'name'>[]) ?? []
+    const ids = new Set(memberRows.map((m) => m.id))
+    setNames(Object.fromEntries(memberRows.map((m) => [m.id, m.name])))
+    setInvs(((invRows as Invoice[]) ?? []).filter((v) => ids.has(v.member_id)))
+    setRecurring((recRows as MoneyRecurring[]) ?? [])
+    setBudget((comp as { expense_budget?: number | null } | null)?.expense_budget ?? null)
+
+    // 固定費: 今月分がまだ無ければ経費行を自動生成（本人が開いたタイミングで）
+    // ponytail: 複数端末で同時に開くと重複し得る。実害が出たらDB側でunique制約に
+    let expList = ((exps as MoneyExpense[]) ?? []).filter((e) => e.company_id === me.company_id)
+    const curMonth = today().slice(0, 7)
+    const curDay = Number(today().slice(8))
+    const toGen = ((recRows as MoneyRecurring[]) ?? []).filter((r) =>
+      r.active && r.day_of_month <= curDay &&
+      !expList.some((e) => e.recurring_id === r.id && e.occurred_on.startsWith(curMonth)))
+    if (toGen.length > 0) {
+      const { data: created } = await supabase.from('money_expenses').insert(toGen.map((r) => ({
+        company_id: r.company_id, member_id: r.member_id, scope: r.scope,
+        occurred_on: `${curMonth}-${String(r.day_of_month).padStart(2, '0')}`,
+        label: r.label, amount: r.amount, receipt_path: null, invoice_id: null,
+        status: r.scope === 'company' ? 'submitted' : 'approved', recurring_id: r.id,
+      }))).select()
+      expList = [...((created as MoneyExpense[]) ?? []), ...expList]
+    }
+    setExpenses(expList)
+  }, [me.id, me.role, me.company_id])
+
+  useEffect(() => { load() }, [load])
+
+  const createProfile = async () => {
+    setErr('')
+    const { error } = profile
+      ? await supabase.from('money_profiles').update({ stance }).eq('id', profile.id)
+      : await supabase.from('money_profiles').insert({ member_id: me.id, stance })
+    if (error) return setErr(`保存できませんでした（${error.message}）`)
+    setPicking(false)
+    load()
+  }
+
+  const addExpense = async () => {
+    const amt = Number(amount)
+    if (!label || !amt) return
+    setErr(''); setBusy(true)
+    try {
+      let receipt_path: string | null = null
+      if (file) {
+        receipt_path = `${me.user_id}/${crypto.randomUUID()}-${file.name}`
+        const { error } = await supabase.storage.from('receipts').upload(receipt_path, file)
+        if (error) throw new Error(error.message)
+      }
+      // OCRで住所が取れていればマップ用に座標化（失敗しても登録は進める）
+      const geo = ocrMeta.address ? await geocode(ocrMeta.address) : null
+      const { error } = await supabase.from('money_expenses').insert({
+        company_id: me.company_id, member_id: me.id, scope,
+        occurred_on: date, label, amount: amt, receipt_path,
+        invoice_id: linkInv || null,
+        status: scope === 'company' ? 'submitted' : 'approved',
+        store: ocrMeta.store, address: ocrMeta.address,
+        lat: geo?.lat ?? null, lng: geo?.lng ?? null,
+      })
+      if (error) throw new Error(error.message)
+      setLabel(''); setAmount(''); setFile(null); setLinkInv('')
+      setOcrMeta({ store: null, address: null })
+      load()
+    } catch (e) {
+      setErr(`登録できませんでした（${(e as Error).message}）`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // レシート画像を選んだらClaudeで店名・金額・日付を読み取ってフォームに反映
+  const pickReceipt = async (f: File | null) => {
+    setFile(f)
+    if (!f || !f.type.startsWith('image/')) return
+    setOcr(true)
+    try {
+      const b64 = await new Promise<string>((res, rej) => {
+        const r = new FileReader()
+        r.onload = () => res((r.result as string).split(',')[1])
+        r.onerror = rej
+        r.readAsDataURL(f)
+      })
+      const { data } = await supabase.functions.invoke('receipt-ocr', {
+        body: { image: b64, media_type: f.type },
+      })
+      const d = data as { ok?: boolean; store?: string; amount?: number; date?: string; address?: string } | null
+      if (d?.ok) {
+        if (d.store && !label) setLabel(d.store)
+        if (d.amount && !amount) setAmount(String(d.amount))
+        if (d.date) setDate(d.date)
+        setOcrMeta({ store: d.store ?? null, address: d.address ?? null })
+      }
+    } catch { /* 読み取れなくても手入力できるので黙ってフォールバック */ } finally {
+      setOcr(false)
+    }
+  }
+
+  const updateExpense = async (id: string, patch: Partial<MoneyExpense>) => {
+    const { error } = await supabase.from('money_expenses').update(patch).eq('id', id)
+    if (error) return setErr(`更新できませんでした（${error.message}）`)
+    load()
+  }
+
+  const addRecurring = async () => {
+    const amt = Number(recAmount)
+    if (!recLabel || !amt) return
+    const { error } = await supabase.from('money_recurring').insert({
+      company_id: me.company_id, member_id: me.id, scope,
+      label: recLabel, amount: amt,
+      day_of_month: Math.min(28, Math.max(1, Number(recDay) || 1)),
+    })
+    if (error) return setErr(`固定費を追加できませんでした（${error.message}）`)
+    setRecLabel(''); setRecAmount(''); setRecDay('1')
+    load()
+  }
+
+  const toggleRecurring = async (r: MoneyRecurring) => {
+    await supabase.from('money_recurring').update({ active: !r.active }).eq('id', r.id)
+    load()
+  }
+
+  const removeRecurring = async (r: MoneyRecurring) => {
+    if (!confirm(`固定費「${r.label}」を削除しますか？（生成済みの経費行は残ります）`)) return
+    await supabase.from('money_recurring').delete().eq('id', r.id)
+    load()
+  }
+
+  const saveBudget = async (v: string) => {
+    const n = Math.max(0, Math.round(Number(v.replace(/[,¥\s]/g, '')) || 0))
+    const { error } = await supabase.from('companies')
+      .update({ expense_budget: n || null }).eq('id', me.company_id)
+    if (error) return setErr('予算を保存できませんでした（管理者のみ変更できます）')
+    setBudget(n || null)
+  }
+
+  const removeExpense = async (e: MoneyExpense) => {
+    if (!confirm(`「${e.label}」を削除しますか？`)) return
+    if (e.receipt_path) await supabase.storage.from('receipts').remove([e.receipt_path])
+    await supabase.from('money_expenses').delete().eq('id', e.id)
+    load()
+  }
+
+  const openReceipt = async (path: string) => {
+    const { data, error } = await supabase.storage.from('receipts').createSignedUrl(path, 3600)
+    if (error || !data) return setErr('レシートを開けませんでした')
+    window.open(data.signedUrl, '_blank')
+  }
+
+  const markPaid = async (inv: Invoice) => {
+    setErr('')
+    const { error } = await supabase.from('invoices')
+      .update({ status: 'paid', paid_at: new Date().toISOString() }).eq('id', inv.id)
+    if (error) return setErr(`更新できませんでした（${error.message}）`)
+    load()
+  }
+
+  // 個人事業主向け: 年間の収入（支払済み請求書）と経費をCSVで出力
+  const exportMoneyCsv = () => {
+    const year = month.slice(0, 4)
+    const rows = [['日付', '区分', '項目', '金額']]
+    for (const v of invs.filter((v) => v.member_id === me.id && v.status === 'paid' && v.month.startsWith(year))) {
+      rows.push([`${v.month}-01`, '収入', `業務委託料（${v.month.replace('-', '年')}月分）`, String(invoiceTotal(v))])
+    }
+    for (const e of expenses.filter((e) => e.member_id === me.id && e.occurred_on.startsWith(year))) {
+      rows.push([e.occurred_on, '経費', e.label, String(-e.amount)])
+    }
+    const csv = '﻿' + rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(',')).join('\r\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    const el = document.createElement('a')
+    el.href = url
+    el.download = `お金の記録_${year}.csv`
+    el.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const myInvs = invs.filter((v) => v.member_id === me.id)
+  const monthExpenses = expenses.filter((e) => e.occurred_on.startsWith(month))
+  const monthPaid = invs.filter((v) => v.month === month && v.status === 'paid')
+
+  // 稼働管理表と同じExcel風テーブルで経費を一覧する
+  const expenseTable = (rows: MoneyExpense[], showName: boolean) => (
+    <div className="plan-table-wrap">
+      <table className="plan-table">
+        <thead>
+          <tr>
+            <th>日付</th>{showName && <th>メンバー</th>}<th>項目</th><th>金額</th><th>区分</th><th>状態</th><th>レシート</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((e) => {
+            const mine = e.member_id === me.id // 自分の行はセルを直接編集できる（Excel風）
+            return (
+            <tr key={e.id}
+              onContextMenu={mine ? (ev) => { ev.preventDefault(); removeExpense(e) } : undefined}>
+              <td className={mine ? 'pt-cell' : 'pt-date'}>
+                {mine ? (
+                  <input type="date" className="pt-mini pt-mini-date" aria-label="日付"
+                    key={`d-${e.id}-${e.occurred_on}`} defaultValue={e.occurred_on}
+                    onBlur={(ev) => { const v = ev.target.value; if (v && v !== e.occurred_on) updateExpense(e.id, { occurred_on: v }) }} />
+                ) : e.occurred_on.slice(5).replace('-', '/')}
+                {e.amount === 0 && <span className="badge badge-yellow">金額未入力</span>}
+              </td>
+              {showName && <td className="pt-cell">{names[e.member_id] ?? '—'}</td>}
+              <td className="pt-cell">
+                {mine ? (
+                  <input type="text" className="pt-mini" placeholder="項目" aria-label="項目"
+                    key={`l-${e.id}-${e.label}`} defaultValue={e.label}
+                    onBlur={(ev) => { const v = ev.target.value.trim(); if (v && v !== e.label) updateExpense(e.id, { label: v }) }} />
+                ) : e.label}
+              </td>
+              <td className="pt-cell pt-yen">
+                {mine ? (
+                  <input type="text" inputMode="numeric" className="pt-mini" placeholder="金額" aria-label="金額"
+                    key={`a-${e.id}-${e.amount}`} defaultValue={e.amount || ''}
+                    onBlur={(ev) => { const v = Math.round(Number(ev.target.value.replace(/[,¥\s]/g, ''))); if (v > 0 && v !== e.amount) updateExpense(e.id, { amount: v }) }} />
+                ) : yen(e.amount)}
+              </td>
+              <td className="pt-cell">
+                {mine ? (
+                  <select aria-label="区分" key={`s-${e.id}-${e.scope}`} className="pt-mini" defaultValue={e.scope}
+                    onChange={(ev) => updateExpense(e.id, { scope: ev.target.value as MoneyExpense['scope'] })}>
+                    <option value="company">会社</option>
+                    <option value="personal">個人</option>
+                  </select>
+                ) : e.scope === 'company' ? '会社' : '個人'}
+              </td>
+              <td className="pt-cell">
+                {e.scope !== 'company' ? '—'
+                  : isPresident && e.status === 'submitted' ? (
+                    <>
+                      <button className="link-btn" onClick={() => updateExpense(e.id, { status: 'approved' })}>承認</button>
+                      <button className="link-btn" style={{ color: 'var(--danger)' }}
+                        onClick={() => updateExpense(e.id, { status: 'rejected' })}>差し戻し</button>
+                    </>
+                  ) : (
+                    <span className={`badge ${e.status === 'approved' ? 'badge-blue' : e.status === 'rejected' ? 'badge-yellow' : 'badge-gray'}`}>
+                      {e.status === 'approved' ? '承認済み' : e.status === 'rejected' ? '差し戻し' : '承認待ち'}
+                    </span>
+                  )}
+              </td>
+              <td className="pt-cell">
+                {e.receipt_path && (
+                  <button className="link-btn" onClick={() => openReceipt(e.receipt_path!)}>表示</button>
+                )}
+              </td>
+              <td className="pt-cell pt-del-cell">
+                {mine && (
+                  <button className="link-btn pt-del" aria-label="削除" title="削除"
+                    onClick={() => removeExpense(e)}>✕</button>
+                )}
+              </td>
+            </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+
+  if (!loaded) return <div className="money-mode"><div className="empty">読み込み中…</div></div>
+
+  // 初回入場 or 立場変更: お金プロフィールの作成
+  if (!profile || picking) {
+    return (
+      <div className="money-mode">
+        <div className="money-head">
+          <h1>経費管理</h1>
+          <button className="btn-outline" onClick={() => (picking ? setPicking(false) : onClose())}>閉じる</button>
+        </div>
+        <div className="card">
+          <h2>お金プロフィール <span className="tag">立場に合わせて画面が変わります</span></h2>
+          <div className="notice">あなたの立場を選んでください。あとから変更できます</div>
+          <div className="list">
+            {(Object.keys(STANCE_LABELS) as MoneyProfile['stance'][]).map((s) => (
+              <label key={s} className="list-item" style={{ cursor: 'pointer' }}>
+                <input type="radio" name="stance" checked={stance === s} onChange={() => setStance(s)} />
+                <div className="title">{STANCE_LABELS[s]}</div>
+              </label>
+            ))}
+          </div>
+          {err && <div className="notice warn">{err}</div>}
+          <button className="btn-primary" onClick={createProfile}>{profile ? '変更する' : 'はじめる'}</button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="money-mode">
+      <div className="money-head">
+        <h1>経費管理</h1>
+        <span className="badge badge-gray">{STANCE_LABELS[profile.stance]}</span>
+        <button className="link-btn" style={{ marginLeft: 'auto' }} onClick={onClose}>✕ 閉じる</button>
+      </div>
+
+      {err && <div className="notice warn">{err}</div>}
+
+      {/* 今月のお金: 円グラフ＋カレンダー＋収支サマリー（マップはレシートOCR対応時に追加予定） */}
+      {(() => {
+        const source = isPresident
+          ? expenses.filter((e) => e.scope === 'company')
+          : expenses.filter((e) => e.member_id === me.id)
+        const [y, mo] = month.split('-').map(Number)
+        const first = new Date(y, mo - 1, 1)
+        const days = new Date(y, mo, 0).getDate()
+        const cells: (number | null)[] = [
+          ...Array(first.getDay()).fill(null),
+          ...Array.from({ length: days }, (_, i) => i + 1),
+        ]
+        const dateOf = (d: number) => `${month}-${String(d).padStart(2, '0')}`
+        const dayTotal = (d: number) =>
+          source.filter((e) => e.occurred_on === dateOf(d)).reduce((s, e) => s + e.amount, 0)
+        const dayRows = source.filter((e) => e.occurred_on === calDay)
+        // 項目（ラベル）ごとの内訳。上位5つ＋その他にまとめる
+        const monthRows = source.filter((e) => e.occurred_on.startsWith(month))
+        const monthTotal = monthRows.reduce((s, e) => s + e.amount, 0)
+        const sums = new Map<string, number>()
+        for (const e of monthRows) sums.set(e.label, (sums.get(e.label) ?? 0) + e.amount)
+        const sorted = [...sums.entries()].sort((a, b) => b[1] - a[1])
+        const groups = sorted.slice(0, 5)
+        const rest = sorted.slice(5).reduce((s, [, v]) => s + v, 0)
+        if (rest > 0) groups.push(['その他', rest])
+        let acc = 0
+        const segs = groups.map(([g, v], i) => {
+          const pct = (v / monthTotal) * 100
+          const seg = { g, v, pct, offset: acc, color: AVATAR_COLORS[i % AVATAR_COLORS.length] }
+          acc += pct
+          return seg
+        })
+        const moveMonth = (d: number) => {
+          setMonth(new Date(y, mo - 1 + d, 1).toLocaleDateString('sv-SE').slice(0, 7))
+          setCalDay('')
+        }
+        // 収入（社長は支払った額、それ以外は自分の請求書）
+        const paidSum = monthPaid.reduce((s, v) => s + invoiceTotal(v), 0)
+        const myMonthInvs = myInvs.filter((v) => v.month === month)
+        const incomeSum = myMonthInvs.filter((v) => v.status === 'paid').reduce((s, v) => s + invoiceTotal(v), 0)
+        return (
+          <div className="card">
+            <h2>
+              お金の流れ <span className="tag">{isPresident ? '会社のお金' : '自分のお金'}</span>
+              <span className="month-nav">
+                <button aria-label="前の月" onClick={() => moveMonth(-1)}>◀</button>
+                <b>{y}年{mo}月</b>
+                <button aria-label="次の月" onClick={() => moveMonth(1)}>▶</button>
+              </span>
+            </h2>
+            <div className="money-top">
+              <svg viewBox="0 0 42 42" className="money-donut" role="img" aria-label="支出の内訳">
+                {monthTotal > 0 ? segs.map((s) => (
+                  <circle key={s.g} cx="21" cy="21" r="15.9155" fill="none"
+                    stroke={s.color} strokeWidth="7"
+                    strokeDasharray={`${s.pct} ${100 - s.pct}`}
+                    strokeDashoffset={25 - s.offset} />
+                )) : (
+                  <circle cx="21" cy="21" r="15.9155" fill="none" stroke="var(--line)" strokeWidth="7" />
+                )}
+                <text x="21" y="20" textAnchor="middle" className="money-donut-total">{yen(monthTotal)}</text>
+                <text x="21" y="25" textAnchor="middle" className="money-donut-sub">支出</text>
+              </svg>
+              <div className="cal-grid money-cal">
+                {['日', '月', '火', '水', '木', '金', '土'].map((w) => (
+                  <div key={w} className="cal-wday">{w}</div>
+                ))}
+                {cells.map((d, i) =>
+                  d === null ? <div key={i} /> : (
+                    <button key={i} className={`cal-day ${dateOf(d) === calDay ? 'sel' : ''}`}
+                      onClick={() => setCalDay(calDay === dateOf(d) ? '' : dateOf(d))}>
+                      {d}
+                      <span className="cal-dots">{dayTotal(d) > 0 && <i className="dot-me" />}</span>
+                    </button>
+                  )
+                )}
+              </div>
+            </div>
+            {calDay && (
+              dayRows.length === 0
+                ? <div className="empty">{calDay.slice(5).replace('-', '/')} の支出はありません</div>
+                : expenseTable(dayRows, isPresident)
+            )}
+            {isPresident ? (
+              <>
+                <div className="log-row">
+                  <span className="d">支払</span>
+                  <span className="t">メンバーへの支払済み {monthPaid.length}件</span>
+                  <span className="dur">{yen(paidSum)}</span>
+                </div>
+                {/* 月間経費予算と使用状況 */}
+                <div className="log-row">
+                  <span className="d">予算</span>
+                  <span className="t">
+                    月の経費予算
+                    <input type="text" inputMode="numeric" className="pt-mini" style={{ marginLeft: 8, width: 110 }}
+                      key={`budget-${budget}`} defaultValue={budget ?? ''} placeholder="未設定"
+                      aria-label="月の経費予算" onBlur={(ev) => saveBudget(ev.target.value)} />
+                  </span>
+                  {budget ? <span className="dur">残り {yen(Math.max(0, budget - monthTotal))}</span> : null}
+                </div>
+                {budget != null && budget > 0 && monthTotal >= budget * 0.8 && (
+                  <div className="notice warn">
+                    経費が予算の{Math.round((monthTotal / budget) * 100)}%に達しています（{yen(monthTotal)} / {yen(budget)}）
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="log-row">
+                  <span className="d">収入</span>
+                  <span className="t">
+                    この月の請求書
+                    {myMonthInvs.length === 0 ? ' なし'
+                      : myMonthInvs.some((v) => v.status !== 'paid') ? '（支払待ちあり）' : '（支払済み）'}
+                  </span>
+                  <span className="dur">{yen(incomeSum)}</span>
+                </div>
+                {profile.stance === 'sole_proprietor' && (() => {
+                  // 月次収支: 収入−経費。前月と比較
+                  const prevMonth = new Date(y, mo - 2, 1).toLocaleDateString('sv-SE').slice(0, 7)
+                  const prevExp = source.filter((e) => e.occurred_on.startsWith(prevMonth)).reduce((s, e) => s + e.amount, 0)
+                  const prevInc = myInvs.filter((v) => v.month === prevMonth && v.status === 'paid').reduce((s, v) => s + invoiceTotal(v), 0)
+                  const profit = incomeSum - monthTotal
+                  const prevProfit = prevInc - prevExp
+                  const diff = profit - prevProfit
+                  return (
+                    <div className="log-row">
+                      <span className="d">利益</span>
+                      <span className="t">収入 − 経費（前月 {yen(prevProfit)}、{diff >= 0 ? '+' : '−'}{yen(Math.abs(diff)).slice(1)}円）</span>
+                      <span className="dur">{yen(profit)}</span>
+                    </div>
+                  )
+                })()}
+              </>
+            )}
+            {monthTotal > 0 && (
+              <details className="money-detail">
+                <summary>項目別の内訳を見る</summary>
+                <div className="money-legend">
+                  {segs.map((s) => (
+                    <div key={s.g} className="money-legend-row">
+                      <i style={{ background: s.color }} />
+                      <span className="g">{s.g}</span>
+                      <span className="pct">{Math.round(s.pct)}%</span>
+                      <span className="v">{yen(s.v)}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+            {!isPresident && myInvs.length > 0 && (
+              <details className="money-detail">
+                <summary>収入の明細（請求書の支払状況）</summary>
+                <div className="list">
+                  {myInvs.map((v) => (
+                    <div key={v.id} className="list-item">
+                      <div className="when">{v.month.replace('-', '/')}</div>
+                      <div className="title">{yen(invoiceTotal(v))}</div>
+                      <span className={`badge ${v.status === 'paid' ? 'badge-blue' : 'badge-gray'}`}>
+                        {v.status === 'paid' ? '支払済み' : '支払待ち'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+            {(() => {
+              const pins = monthRows.filter((e) => e.lat != null && e.lng != null)
+              return pins.length > 0 && (
+                <details className="money-detail">
+                  <summary>支出マップ（{pins.length}件）</summary>
+                  <ExpenseMap rows={pins} />
+                  <div className="notice">レシート読み取りで住所が取れた経費だけ表示されます</div>
+                </details>
+              )
+            })()}
+          </div>
+        )
+      })()}
+
+      {/* 経費: 登録フォームと一覧をひとつのカードに */}
+      <div className="card">
+        <h2>
+          経費 <span className="tag">{isPresident ? '会社経費の一覧と登録' : '登録と一覧'}</span>
+          <span className="month-nav">
+            <div className="goal-menu">
+              <button className="icon-btn goal-menu-btn" aria-label="経費メニュー" aria-expanded={menuOpen}
+                onClick={() => setMenuOpen(!menuOpen)}>☰</button>
+              {menuOpen && (
+                <div className="goal-menu-pop" role="menu">
+                  <button role="menuitem" onClick={() => { setMenuOpen(false); exportMoneyCsv() }}>
+                    {month.slice(0, 4)}年のCSVを出力
+                  </button>
+                  <button role="menuitem" onClick={() => { setMenuOpen(false); setStance(profile.stance); setPicking(true) }}>
+                    立場を変更
+                  </button>
+                </div>
+              )}
+            </div>
+          </span>
+        </h2>
+        <div className="seg-row" role="tablist" aria-label="経費の区分">
+          <button role="tab" aria-selected={scope === 'company'}
+            className={`preset-chip ${scope === 'company' ? 'sel' : ''}`}
+            onClick={() => setScope('company')}>会社に提出</button>
+          <button role="tab" aria-selected={scope === 'personal'}
+            className={`preset-chip ${scope === 'personal' ? 'sel' : ''}`}
+            onClick={() => setScope('personal')}>個人の帳簿</button>
+        </div>
+        <div className="draft-times" style={{ flexWrap: 'wrap' }}>
+          <input type="date" aria-label="日付" style={{ width: 150 }}
+            value={date} onChange={(e) => setDate(e.target.value)} />
+          <input type="text" placeholder="項目（例: 交通費）" style={{ flex: 1, minWidth: 140 }}
+            value={label} onChange={(e) => setLabel(e.target.value)} />
+          <input type="text" inputMode="numeric" placeholder="金額" style={{ width: 90 }}
+            value={amount} onChange={(e) => setAmount(e.target.value)} />
+        </div>
+        <div className="draft-times" style={{ flexWrap: 'wrap' }}>
+          <label className="btn-outline" style={{ cursor: 'pointer', margin: 0 }}>
+            {ocr ? '🔍 読み取り中…' : file ? `📎 ${file.name}` : '📷 レシートを撮影'}
+            <input type="file" accept="image/*" capture="environment" hidden
+              onChange={(e) => pickReceipt(e.target.files?.[0] ?? null)} />
+          </label>
+          <label className="link-btn" style={{ cursor: 'pointer' }}>
+            ファイルを選択
+            <input type="file" accept="image/*,.pdf" hidden
+              onChange={(e) => pickReceipt(e.target.files?.[0] ?? null)} />
+          </label>
+          {myInvs.length > 0 && (
+            <select aria-label="請求書に紐付け" value={linkInv} onChange={(e) => setLinkInv(e.target.value)}>
+              <option value="">請求書に紐付けない</option>
+              {myInvs.map((v) => (
+                <option key={v.id} value={v.id}>{v.month.replace('-', '年')}月分の請求書</option>
+              ))}
+            </select>
+          )}
+          <button className="btn-primary" style={{ margin: '0 0 0 auto' }}
+            disabled={busy || !label || !Number(amount)} onClick={addExpense}>
+            {busy ? '登録中…' : '登録'}
+          </button>
+        </div>
+        <div className="notice">
+          {scope === 'company'
+            ? '「会社に提出」は管理者にレシートごと共有され、経費精算・請求書の裏付けになります'
+            : '「個人の帳簿」は自分だけが見られる記録です（確定申告用など）'}
+        </div>
+        {(() => {
+          const rows = isPresident
+            ? monthExpenses.filter((e) => e.scope === 'company')
+            : expenses.filter((e) => e.member_id === me.id)
+          return rows.length === 0
+            ? <div className="empty">経費はまだありません</div>
+            : expenseTable(rows, isPresident)
+        })()}
+        <details className="money-detail">
+          <summary>固定費・定期支出（毎月自動で経費に追加）{recurring.filter((r) => r.active).length > 0 && ` · ${recurring.filter((r) => r.active).length}件`}</summary>
+          {recurring.length > 0 && (
+            <div className="list" style={{ marginBottom: 8 }}>
+              {recurring.map((r) => (
+                <div key={r.id} className="list-item" style={r.active ? undefined : { opacity: .5 }}>
+                  <div className="when">毎月{r.day_of_month}日</div>
+                  <div className="title">{r.label}（{r.scope === 'company' ? '会社' : '個人'}）</div>
+                  <span className="dur">{yen(r.amount)}</span>
+                  <button className="link-btn" onClick={() => toggleRecurring(r)}>{r.active ? '停止' : '再開'}</button>
+                  <button className="link-btn" onClick={() => removeRecurring(r)}>削除</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="draft-times" style={{ flexWrap: 'wrap' }}>
+            <input type="text" placeholder="項目（例: 家賃）" style={{ flex: 1, minWidth: 120 }}
+              value={recLabel} onChange={(e) => setRecLabel(e.target.value)} />
+            <input type="text" inputMode="numeric" placeholder="金額" style={{ width: 90 }}
+              value={recAmount} onChange={(e) => setRecAmount(e.target.value)} />
+            <label style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
+              毎月
+              <input type="number" min={1} max={28} style={{ width: 60 }}
+                value={recDay} onChange={(e) => setRecDay(e.target.value)} />
+              日
+            </label>
+            <button className="btn-outline" disabled={!recLabel || !Number(recAmount)} onClick={addRecurring}>追加</button>
+          </div>
+          <div className="notice">区分は上の「会社に提出 / 個人の帳簿」の選択が使われます。経費行はその月に入ってから自動生成されます</div>
+        </details>
+      </div>
+
+      {isPresident && (
+        <div className="card">
+          <h2>メンバーへの支払い <span className="tag">給与・委託報酬（請求書）</span></h2>
+          {invs.length === 0 ? <div className="empty">請求書はまだありません</div> : (
+            <div className="list">
+              {invs.map((v) => (
+                <div key={v.id} className="list-item">
+                  <div className="when">{v.month.replace('-', '/')}</div>
+                  <div className="title">{names[v.member_id] ?? '—'} · {yen(invoiceTotal(v))}</div>
+                  {v.status === 'paid' ? (
+                    <span className="badge badge-blue">支払済み</span>
+                  ) : (
+                    <button className="btn-primary" style={{ margin: 0 }} onClick={() => markPaid(v)}>支払済みにする</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ---------- 名簿 ---------- */
 // MyHood swatch palette（塗り専用。白文字が乗るので濃色寄りに調整）
 const AVATAR_COLORS = ['#007f66', '#2F8CFF', '#7c5cd6', '#0f8a7e', '#c2447e', '#c2691c']
@@ -1944,11 +2644,20 @@ function MyWork({ me }: { me: Member }) {
   const [view, setView] = useState(false)
   const [err, setErr] = useState('')
 
+  const [autoExp, setAutoExp] = useState<MoneyExpense[]>([]) // 経費管理で承認済み・未請求の会社経費
+
   const load = useCallback(async () => {
     setMinutes(await monthWorkedMinutes(me.id, month))
-    const { data } = await supabase.from('invoices').select('*')
-      .eq('member_id', me.id).eq('month', month).maybeSingle()
+    const { from, to } = monthRange(month)
+    const [{ data }, { data: exps }] = await Promise.all([
+      supabase.from('invoices').select('*')
+        .eq('member_id', me.id).eq('month', month).maybeSingle(),
+      supabase.from('money_expenses').select('*')
+        .eq('member_id', me.id).eq('scope', 'company').eq('status', 'approved')
+        .is('invoice_id', null).gte('occurred_on', from).lt('occurred_on', to),
+    ])
     setInv((data as Invoice | null) ?? null)
+    setAutoExp((exps as MoneyExpense[]) ?? [])
   }, [me.id, month])
 
   useEffect(() => { load() }, [load])
@@ -1962,12 +2671,19 @@ function MyWork({ me }: { me: Member }) {
 
   const issue = async () => {
     setErr('')
-    const { error } = await supabase.from('invoices').insert({
+    // 経費管理で承認済みの会社経費を自動で明細に載せる
+    const allExpenses = [...autoExp.map((e) => ({ label: e.label, amount: e.amount })), ...expenses]
+    const { data: created, error } = await supabase.from('invoices').insert({
       member_id: me.id, month, minutes: Math.round(minutes),
-      hourly_rate: me.hourly_rate, expenses,
+      hourly_rate: me.hourly_rate, expenses: allExpenses,
       status: 'issued', issued_at: new Date().toISOString(), paid_at: null,
-    })
+    }).select().single()
     if (error) return setErr(`発行できませんでした（${error.message}）`)
+    if (autoExp.length > 0 && created) {
+      await supabase.from('money_expenses')
+        .update({ invoice_id: (created as Invoice).id })
+        .in('id', autoExp.map((e) => e.id))
+    }
     setExpenses([])
     load()
     setView(true)
@@ -1998,6 +2714,13 @@ function MyWork({ me }: { me: Member }) {
         </>
       ) : (
         <>
+          {autoExp.map((e) => (
+            <div key={e.id} className="log-row">
+              <span className="d">経費</span>
+              <span className="t">{e.label} <span className="tag">経費管理から自動</span></span>
+              <span className="dur">{yen(e.amount)}</span>
+            </div>
+          ))}
           {expenses.map((e, i) => (
             <div key={i} className="log-row">
               <span className="d">経費</span>
@@ -2014,7 +2737,7 @@ function MyWork({ me }: { me: Member }) {
           </div>
           {err && <div className="notice warn">{err}</div>}
           <button className="btn-primary" disabled={minutes <= 0} onClick={issue}>
-            請求書を発行（{yen(labor + expenses.reduce((s, e) => s + e.amount, 0))}）
+            請求書を発行（{yen(labor + autoExp.reduce((s, e) => s + e.amount, 0) + expenses.reduce((s, e) => s + e.amount, 0))}）
           </button>
           <div className="notice">
             発行すると管理者に届き、確認後に支払済みになります。発行時点の実働と時給で金額が確定します
@@ -2026,7 +2749,7 @@ function MyWork({ me }: { me: Member }) {
 }
 
 /* ---------- プロフィール・設定 ---------- */
-function Profile({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
+function Profile({ me, onRename, onOpenMoney }: { me: Member; onRename: (name: string) => void; onOpenMoney?: () => void }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   return (
     <>
@@ -2048,6 +2771,20 @@ function Profile({ me, onRename }: { me: Member; onRename: (name: string) => voi
           <div className="notice">所定勤務時間帯の変更は管理者に依頼してください（打刻漏れ時の自動補完に使われます）</div>
         )}
       </div>
+      {onOpenMoney && (
+        <div className="card">
+          <div className="link-row">
+            <div className="link-info">
+              <span style={{ fontSize: 22 }}>💰</span>
+              <div>
+                <div className="link-title">経費管理</div>
+                <div className="link-desc">経費の提出・支払管理・個人の帳簿を全画面で</div>
+              </div>
+            </div>
+            <button className="btn-primary" style={{ margin: 0 }} onClick={onOpenMoney}>開く</button>
+          </div>
+        </div>
+      )}
       {settingsOpen && <AccountSettings me={me} onRename={onRename} />}
       {me.hourly_rate > 0 && <MyWork me={me} />}
     </>
@@ -2736,7 +3473,7 @@ function MemberProfileView({ member, me, names, onBack }: {
 }
 
 /* ---------- プロフィールタブ（自分／管理者は組織管理と切り替え） ---------- */
-function ProfilePage({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
+function ProfilePage({ me, onRename, onOpenMoney }: { me: Member; onRename: (name: string) => void; onOpenMoney?: () => void }) {
   const isAdmin = me.role === 'admin'
   const [view, setView] = useState<'mine' | 'org'>('mine')
   const [members, setMembers] = useState<Member[]>([])
@@ -2770,7 +3507,7 @@ function ProfilePage({ me, onRename }: { me: Member; onRename: (name: string) =>
         <Members me={me} onOpenProfile={setViewing} />
       ) : (
         <>
-          <Profile me={me} onRename={onRename} />
+          <Profile me={me} onRename={onRename} onOpenMoney={onOpenMoney} />
           <NextActionsCard member={me} me={me} />
           <GoalsCard member={me} me={me} names={names} />
           <FeedbackCard target={me} me={me} names={names} />
@@ -2885,6 +3622,7 @@ function App() {
   const [company, setCompany] = useState<{ id: string; name: string; icon: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [recovering, setRecovering] = useState(false)
+  const [moneyMode, setMoneyMode] = useState(false)
 
   const loadMe = useCallback(async (s: Session | null) => {
     if (!s) { setMe(null); setCompany(null); setLoading(false); return }
@@ -2935,6 +3673,15 @@ function App() {
     return () => sub.subscription.unsubscribe()
   }, [loadMe])
 
+  // お金管理モード: ヘッダー・タブバーを出さない全画面
+  if (moneyMode && me) {
+    return (
+      <div className="app">
+        <MoneyMode me={me} onClose={() => setMoneyMode(false)} />
+      </div>
+    )
+  }
+
   return (
     <div className="app">
       <header className="header" style={{ visibility: me ? 'visible' : 'hidden' }}>
@@ -2948,10 +3695,19 @@ function App() {
           )}
         </div>
         {me && (
-          <button className={`avatar ${tab === 'profile' ? 'sel' : ''}`} title="プロフィール・設定"
-            onClick={() => setTab('profile')}>
-            {me.name[0]}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button className="icon-btn money-icon-btn" title="経費管理" aria-label="経費管理"
+              onClick={() => setMoneyMode(true)}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M8.5 7.5 12 12l3.5-4.5M12 12v5M9.5 13.5h5M9.5 16h5" />
+              </svg>
+            </button>
+            <button className={`avatar ${tab === 'profile' ? 'sel' : ''}`} title="プロフィール・設定"
+              onClick={() => setTab('profile')}>
+              {me.name[0]}
+            </button>
+          </div>
         )}
       </header>
 
@@ -2964,7 +3720,10 @@ function App() {
             {tab === 'home' && <Home me={me} />}
             {tab === 'report' && <Report me={me} />}
             {tab === 'schedule' && <Schedule me={me} />}
-            {tab === 'profile' && <ProfilePage me={me} onRename={(name) => setMe({ ...me, name })} />}
+            {tab === 'profile' && (
+              <ProfilePage me={me} onRename={(name) => setMe({ ...me, name })}
+                onOpenMoney={() => setMoneyMode(true)} />
+            )}
             <nav className="tabbar">
               {tabsFor(me.role).map((t) => (
                 <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => setTab(t.key)}>

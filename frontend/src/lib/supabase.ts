@@ -146,4 +146,42 @@ export type FeedbackPost = {
   created_at: string
 }
 
+export type MoneyProfile = {
+  id: string
+  member_id: string
+  stance: 'president' | 'sole_proprietor' | 'part_time' | 'employee'
+  created_at: string
+}
+
+export type MoneyExpense = {
+  id: string
+  company_id: string
+  member_id: string
+  scope: 'company' | 'personal' // 会社に提出する経費 / 個人の出費
+  occurred_on: string // YYYY-MM-DD
+  label: string
+  amount: number
+  receipt_path: string | null // receiptsバケット内のパス（署名URLで閲覧）
+  invoice_id: string | null // 稼働と請求への紐付け（任意）
+  status: 'submitted' | 'approved' | 'rejected' // 会社提出分の承認状態（個人はapproved固定）
+  store: string | null // OCRで読んだ店名
+  address: string | null
+  lat: number | null // マップ表示用（住所をジオコーディング）
+  lng: number | null
+  recurring_id: string | null // 固定費から自動生成された行
+  created_at: string
+}
+
+export type MoneyRecurring = {
+  id: string
+  company_id: string
+  member_id: string
+  scope: 'company' | 'personal'
+  label: string
+  amount: number
+  day_of_month: number // 1-28
+  active: boolean
+  created_at: string
+}
+
 export const today = () => new Date().toLocaleDateString('sv-SE') // YYYY-MM-DD ローカル日付
