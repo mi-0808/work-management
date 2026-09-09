@@ -769,8 +769,6 @@ tr:last-child td { border-bottom: none; }
 .money-donut-sub { font-size: 2.8px; fill: var(--muted); }
 .money-cal { flex: 1; min-width: 220px; }
 .pt-add-row td { border-top: 2px dashed var(--line); }
-.pt-cell-sum { margin-right: 6px; }
-.pt-cell-add { width: 64px; opacity: .8; }
 .pt-add-row input { opacity: .9; }
 .money-view-toggle { margin: 4px 0 12px; }
 .wall-bar { height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; margin: 8px 0; }

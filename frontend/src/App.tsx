@@ -1695,6 +1695,21 @@ const WALLS: [number, string][] = [
   [1500000, '150万円: 配偶者特別控除が満額でなくなる目安'],
 ]
 
+// Excel風の金額セル: 表示値をそのまま編集し、Enter/フォーカスアウトで確定（稼働表と同じ操作感）
+function CellNum({ value, label, placeholder = '0', onCommit }: {
+  value: number; label: string; placeholder?: string; onCommit: (v: number) => void
+}) {
+  return (
+    <input type="text" inputMode="numeric" className="pt-mini" aria-label={label} placeholder={placeholder}
+      key={value} defaultValue={value || ''}
+      onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) e.currentTarget.blur() }}
+      onBlur={(e) => {
+        const v = Math.round(Number(e.target.value.replace(/[,¥\s]/g, '')))
+        if (!Number.isNaN(v) && v >= 0 && v !== value) onCommit(v)
+      }} />
+  )
+}
+
 // 表の最下行から直接入力して追加するExcel風の行（日付/月・項目・金額）
 function TableAddRow({ dateKind, lead = 0, tail = 1, placeholder, onAdd }: {
   dateKind: 'date' | 'month'
@@ -1966,6 +1981,36 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
     load()
   }
 
+  // 年間の収支セルの直接編集: 表示合計がその値になるよう「売上」「経費」ラベルの調整行を差し替える。
+  // 請求書やレシート付き経費など明細のある分は動かせないので、その分より小さい値は切り上げる
+  const setMonthIncome = async (m: string, total: number, currentTotal: number) => {
+    const manual = incomes.filter((i) => i.month === m && i.label === '売上').reduce((s, i) => s + i.amount, 0)
+    const v = Math.max(0, total - (currentTotal - manual))
+    await supabase.from('money_incomes').delete().eq('member_id', me.id).eq('month', m).eq('label', '売上')
+    if (v > 0) {
+      await supabase.from('money_incomes').insert({
+        company_id: me.company_id, member_id: me.id, month: m, label: '売上', amount: v,
+      })
+    }
+    load()
+  }
+  const setMonthExpense = async (m: string, total: number, currentTotal: number) => {
+    const day1 = `${m}-01`
+    const manual = expenses.filter((e) => e.member_id === me.id && e.label === '経費' && e.occurred_on === day1 && !e.receipt_path)
+      .reduce((s, e) => s + e.amount, 0)
+    const v = Math.max(0, total - (currentTotal - manual))
+    await supabase.from('money_expenses').delete()
+      .eq('member_id', me.id).eq('label', '経費').eq('occurred_on', day1).is('receipt_path', null)
+    if (v > 0) {
+      await supabase.from('money_expenses').insert({
+        company_id: me.company_id, member_id: me.id, scope,
+        occurred_on: day1, label: '経費', amount: v, receipt_path: null, invoice_id: null,
+        status: scope === 'company' ? 'submitted' : 'approved',
+      })
+    }
+    load()
+  }
+
   // 表の最下行からの直接追加（レシートなしの簡易登録）
   const addExpenseInline = async (occurred_on: string, label: string, amount: number) => {
     const { error } = await supabase.from('money_expenses').insert({
@@ -2071,9 +2116,8 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
               </td>
               <td className="pt-cell pt-yen">
                 {mine ? (
-                  <input type="text" inputMode="numeric" className="pt-mini" placeholder="金額" aria-label="金額"
-                    key={`a-${e.id}-${e.amount}`} defaultValue={e.amount || ''}
-                    onBlur={(ev) => { const v = Math.round(Number(ev.target.value.replace(/[,¥\s]/g, ''))); if (v > 0 && v !== e.amount) updateExpense(e.id, { amount: v }) }} />
+                  <CellNum value={e.amount} label="金額" placeholder="金額"
+                    onCommit={(v) => { if (v > 0) updateExpense(e.id, { amount: v }) }} />
                 ) : yen(e.amount)}
               </td>
               <td className="pt-cell">
@@ -2383,30 +2427,17 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
                 <tbody>
                   {months.map((m) => {
                     const inc = incomeOf(m), exp = expenseOf(m)
-                    // 金額セルに直接入力→その月の売上/経費として登録（Excel風。過去の月もOK）
-                    const cellAdd = (onAdd: (amt: number) => void) => ({
-                      onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
-                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) e.currentTarget.blur()
-                      },
-                      onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
-                        const v = Math.round(Number(e.target.value.replace(/[,¥\s]/g, '')))
-                        if (v > 0) { onAdd(v); e.target.value = '' }
-                      },
-                    })
+                    // セルを押してそのまま入力（稼働表と同じ）。過去の月もOK
                     return (
                       <tr key={m}>
                         <td className="pt-date">{Number(m.slice(5))}月</td>
                         <td className="pt-cell pt-yen">
-                          {inc ? <span className="pt-cell-sum">{yen(inc)}</span> : null}
-                          <input type="text" inputMode="numeric" className="pt-mini pt-cell-add" placeholder="＋"
-                            aria-label={`${Number(m.slice(5))}月の売上を追加`}
-                            {...cellAdd((v) => addIncome(m, '売上', v))} />
+                          <CellNum value={inc} label={`${Number(m.slice(5))}月の売上`}
+                            onCommit={(v) => setMonthIncome(m, v, inc)} />
                         </td>
                         <td className="pt-cell pt-yen">
-                          {exp ? <span className="pt-cell-sum">{yen(exp)}</span> : null}
-                          <input type="text" inputMode="numeric" className="pt-mini pt-cell-add" placeholder="＋"
-                            aria-label={`${Number(m.slice(5))}月の経費を追加`}
-                            {...cellAdd((v) => addExpenseInline(`${m}-01`, '経費', v))} />
+                          <CellNum value={exp} label={`${Number(m.slice(5))}月の経費`}
+                            onCommit={(v) => setMonthExpense(m, v, exp)} />
                         </td>
                         <td className="pt-cell pt-yen">{inc || exp ? yen(inc - exp) : '—'}</td>
                       </tr>
