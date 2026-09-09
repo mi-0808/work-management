@@ -1695,6 +1695,45 @@ const WALLS: [number, string][] = [
   [1500000, '150万円: 配偶者特別控除が満額でなくなる目安'],
 ]
 
+// 表の最下行から直接入力して追加するExcel風の行（日付/月・項目・金額）
+function TableAddRow({ dateKind, lead = 0, tail = 1, placeholder, onAdd }: {
+  dateKind: 'date' | 'month'
+  lead?: number // 日付と項目の間の空セル数
+  tail?: number // 金額より後ろのセル数（先頭に追加ボタンを置く）
+  placeholder: string
+  onAdd: (date: string, label: string, amount: number) => void
+}) {
+  const [d, setD] = useState(dateKind === 'month' ? today().slice(0, 7) : today())
+  const [l, setL] = useState('')
+  const [a, setA] = useState('')
+  const amt = Math.round(Number(a.replace(/[,¥\s]/g, '')))
+  const ok = l.trim() !== '' && amt > 0
+  const submit = () => { if (ok) { onAdd(d, l.trim(), amt); setL(''); setA('') } }
+  const onKey = (e: { key: string; nativeEvent: { isComposing: boolean } }) => {
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit()
+  }
+  return (
+    <tr className="pt-add-row">
+      <td className="pt-cell">
+        <input type={dateKind} className="pt-mini pt-mini-date" aria-label={dateKind === 'month' ? '月' : '日付'}
+          value={d} onChange={(e) => setD(e.target.value)} />
+      </td>
+      {Array.from({ length: lead }, (_, i) => <td key={i} className="pt-cell" />)}
+      <td className="pt-cell">
+        <input type="text" className="pt-mini" placeholder={placeholder} aria-label="項目"
+          value={l} onChange={(e) => setL(e.target.value)} onKeyDown={onKey} />
+      </td>
+      <td className="pt-cell pt-yen">
+        <input type="text" inputMode="numeric" className="pt-mini" placeholder="金額" aria-label="金額"
+          value={a} onChange={(e) => setA(e.target.value)} onKeyDown={onKey} />
+      </td>
+      <td className="pt-cell" colSpan={tail}>
+        <button className="link-btn" disabled={!ok} onClick={submit}>＋追加</button>
+      </td>
+    </tr>
+  )
+}
+
 // 住所→緯度経度（OpenStreetMap Nominatim。失敗してもnullで進む）
 const geocode = async (addr: string): Promise<{ lat: number; lng: number } | null> => {
   try {
@@ -1758,10 +1797,8 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
   const [recLabel, setRecLabel] = useState('')
   const [recAmount, setRecAmount] = useState('')
   const [recDay, setRecDay] = useState('1')
-  // 売上（手入力収入）フォーム
-  const [incMonth, setIncMonth] = useState(today().slice(0, 7))
-  const [incLabel, setIncLabel] = useState('')
-  const [incAmount, setIncAmount] = useState('')
+  // カレンダー下の表示切替: 年間の収支確認 / 経費の登録
+  const [moneyView, setMoneyView] = useState<'year' | 'entry'>('entry')
   // 扶養の壁QA: nullは非表示。stepを進めて最後にrec（推奨額）を出す
   const [wallQA, setWallQA] = useState<{ step: number; rec?: number | null; note?: string } | null>(null)
 
@@ -1921,14 +1958,22 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
     setBudget(n || null)
   }
 
-  const addIncome = async () => {
-    const amt = Math.round(Number(incAmount.replace(/[,¥\s]/g, '')))
-    if (!incLabel || !amt) return
+  const addIncome = async (month: string, label: string, amount: number) => {
     const { error } = await supabase.from('money_incomes').insert({
-      company_id: me.company_id, member_id: me.id, month: incMonth, label: incLabel, amount: amt,
+      company_id: me.company_id, member_id: me.id, month, label, amount,
     })
     if (error) return setErr(`売上を登録できませんでした（${error.message}）`)
-    setIncLabel(''); setIncAmount('')
+    load()
+  }
+
+  // 表の最下行からの直接追加（レシートなしの簡易登録）
+  const addExpenseInline = async (occurred_on: string, label: string, amount: number) => {
+    const { error } = await supabase.from('money_expenses').insert({
+      company_id: me.company_id, member_id: me.id, scope,
+      occurred_on, label, amount, receipt_path: null, invoice_id: null,
+      status: scope === 'company' ? 'submitted' : 'approved',
+    })
+    if (error) return setErr(`登録できませんでした（${error.message}）`)
     load()
   }
 
@@ -2068,6 +2113,8 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
             </tr>
             )
           })}
+          <TableAddRow dateKind="date" lead={showName ? 1 : 0} tail={4}
+            placeholder="項目（例: 交通費）" onAdd={addExpenseInline} />
         </tbody>
       </table>
     </div>
@@ -2294,8 +2341,18 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
         )
       })()}
 
+      {/* カレンダー下の切り替え: 年間の収支確認 / 経費の登録 */}
+      <div className="seg-row money-view-toggle" role="tablist" aria-label="表示切替">
+        <button role="tab" aria-selected={moneyView === 'entry'}
+          className={`preset-chip ${moneyView === 'entry' ? 'sel' : ''}`}
+          onClick={() => setMoneyView('entry')}>経費の登録</button>
+        <button role="tab" aria-selected={moneyView === 'year'}
+          className={`preset-chip ${moneyView === 'year' ? 'sel' : ''}`}
+          onClick={() => setMoneyView('year')}>年間の収支</button>
+      </div>
+
       {/* 年間の収支: 月ごとの売上・経費と扶養の壁チェック（自分個人の収支なので全立場で表示） */}
-      {(() => {
+      {moneyView === 'year' && (() => {
         const year = month.slice(0, 4)
         const incomeOf = (m: string) =>
           myInvs.filter((v) => v.month === m && v.status === 'paid').reduce((s, v) => s + invoiceTotal(v), 0)
@@ -2341,22 +2398,13 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
                     <td className="pt-cell pt-yen"><b>{yen(yearExpense)}</b></td>
                     <td className="pt-cell pt-yen"><b>{yen(yearIncome - yearExpense)}</b></td>
                   </tr>
+                  {/* 売上（請求書以外の収入）は表の最下行から直接追加 */}
+                  <TableAddRow dateKind="month" tail={1}
+                    placeholder="売上項目（例: バイト代）" onAdd={addIncome} />
                 </tbody>
               </table>
             </div>
-
-            {/* 売上の手入力（請求書以外の収入） */}
-            <div className="draft-times" style={{ flexWrap: 'wrap', marginTop: 8 }}>
-              <input type="month" aria-label="売上の月" style={{ width: 150 }}
-                value={incMonth} onChange={(e) => setIncMonth(e.target.value)} />
-              <input type="text" placeholder="売上項目（例: バイト代）" style={{ flex: 1, minWidth: 140 }}
-                value={incLabel} onChange={(e) => setIncLabel(e.target.value)} />
-              <input type="text" inputMode="numeric" placeholder="金額" style={{ width: 90 }}
-                value={incAmount} onChange={(e) => setIncAmount(e.target.value)} />
-              <button className="btn-outline" disabled={!incLabel || !Number(incAmount.replace(/[,¥\s]/g, ''))}
-                onClick={addIncome}>売上を追加</button>
-            </div>
-            <div className="notice">請求書（支払済み）は自動で売上に入ります。それ以外の収入はここから追加してください</div>
+            <div className="notice">請求書（支払済み）は自動で売上に入ります。それ以外の収入は表の最下行から追加してください</div>
             {incomes.filter((i) => i.month.startsWith(year)).length > 0 && (
               <details className="money-detail">
                 <summary>手入力した売上（{incomes.filter((i) => i.month.startsWith(year)).length}件）</summary>
@@ -2456,7 +2504,7 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
       })()}
 
       {/* 経費: 登録フォームと一覧をひとつのカードに */}
-      <div className="card">
+      {moneyView === 'entry' && <div className="card">
         <h2>
           経費 <span className="tag">{isPresident ? '会社経費の一覧と登録' : '登録と一覧'}</span>
           <span className="month-nav">
@@ -2559,7 +2607,7 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
           </div>
           <div className="notice">区分は上の「会社に提出 / 個人の帳簿」の選択が使われます。経費行はその月に入ってから自動生成されます</div>
         </details>
-      </div>
+      </div>}
 
       {isPresident && (
         <div className="card">
@@ -3554,6 +3602,22 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
                   </td>
                 </tr>
               ))}
+              {isSelf && (
+                // 表の最下行から直接追加（Excel風）
+                <tr className="pt-add-row">
+                  <td className="na-due">＋</td>
+                  <td className="na-title">
+                    <input type="text" placeholder="やることを追加" aria-label="やることを追加"
+                      value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
+                      onCompositionStart={() => { composing.current = true }}
+                      onCompositionEnd={() => { composing.current = false }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !composing.current && !e.nativeEvent.isComposing) add() }} />
+                  </td>
+                  <td colSpan={2}>
+                    <button className="link-btn" disabled={!newTitle.trim()} onClick={add}>＋追加</button>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -3565,15 +3629,17 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
       )}
       {isSelf && (
         <>
-          <div className="draft-times">
-            <input type="text" placeholder="やることを追加" style={{ flex: 1 }}
-              value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
-              onCompositionStart={() => { composing.current = true }}
-              onCompositionEnd={() => { composing.current = false }}
-              // 日本語入力の変換確定Enterでは追加しない
-              onKeyDown={(e) => { if (e.key === 'Enter' && !composing.current && !e.nativeEvent.isComposing) add() }} />
-            <button className="btn-primary" style={{ margin: 0 }} disabled={!newTitle.trim()} onClick={add}>追加</button>
-          </div>
+          {visibleRows.length === 0 && (
+            <div className="draft-times">
+              <input type="text" placeholder="やることを追加" style={{ flex: 1 }}
+                value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
+                onCompositionStart={() => { composing.current = true }}
+                onCompositionEnd={() => { composing.current = false }}
+                // 日本語入力の変換確定Enterでは追加しない
+                onKeyDown={(e) => { if (e.key === 'Enter' && !composing.current && !e.nativeEvent.isComposing) add() }} />
+              <button className="btn-primary" style={{ margin: 0 }} disabled={!newTitle.trim()} onClick={add}>追加</button>
+            </div>
+          )}
           <div className="notice">目標とは別の、直近のやることリストです。稼働表とは連動しません</div>
         </>
       )}
