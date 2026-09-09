@@ -2294,8 +2294,8 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
         )
       })()}
 
-      {/* 年間の収支: 月ごとの売上・経費と扶養の壁チェック */}
-      {!isPresident && (() => {
+      {/* 年間の収支: 月ごとの売上・経費と扶養の壁チェック（自分個人の収支なので全立場で表示） */}
+      {(() => {
         const year = month.slice(0, 4)
         const incomeOf = (m: string) =>
           myInvs.filter((v) => v.month === m && v.status === 'paid').reduce((s, v) => s + invoiceTotal(v), 0)
