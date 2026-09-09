@@ -150,6 +150,17 @@ export type MoneyProfile = {
   id: string
   member_id: string
   stance: 'president' | 'sole_proprietor' | 'part_time' | 'employee'
+  wall_amount: number | null // 扶養の壁（年収の上限目安・円）。nullは未設定または対象外
+  created_at: string
+}
+
+export type MoneyIncome = {
+  id: string
+  company_id: string
+  member_id: string
+  month: string // YYYY-MM
+  label: string
+  amount: number
   created_at: string
 }
 

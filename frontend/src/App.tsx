@@ -4,7 +4,7 @@ import { isProviderEnabled, supabase, today } from './lib/supabase'
 import { DEMO, DEMO_MEMBERS } from './lib/demo'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import type { Attendance, Break, FeedbackPost, Goal, GoalEvaluation, Invoice, Member, MoneyExpense, MoneyProfile, MoneyRecurring, NextAction, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
+import type { Attendance, Break, FeedbackPost, Goal, GoalEvaluation, Invoice, Member, MoneyExpense, MoneyIncome, MoneyProfile, MoneyRecurring, NextAction, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
 
 type Tab = 'home' | 'report' | 'schedule' | 'profile'
 
@@ -1686,6 +1686,15 @@ const STANCE_LABELS: Record<MoneyProfile['stance'], string> = {
   employee: '会社員',
 }
 
+// 扶養の壁の候補（金額円 → 短い説明）。2025年の税制改正後の目安
+const WALLS: [number, string][] = [
+  [1030000, '103万円: 住民税がかかり始める目安（自治体により異なる）'],
+  [1060000, '106万円: 従業員51人以上の会社で週20時間以上働くと社会保険に加入'],
+  [1230000, '123万円: 所得税がかかり始めるライン（2025年改正で103万円から引き上げ）'],
+  [1300000, '130万円: 社会保険の扶養から外れるライン'],
+  [1500000, '150万円: 配偶者特別控除が満額でなくなる目安'],
+]
+
 // 住所→緯度経度（OpenStreetMap Nominatim。失敗してもnullで進む）
 const geocode = async (addr: string): Promise<{ lat: number; lng: number } | null> => {
   try {
@@ -1723,6 +1732,7 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
   const [picking, setPicking] = useState(false)
   const [stance, setStance] = useState<MoneyProfile['stance']>('employee')
   const [expenses, setExpenses] = useState<MoneyExpense[]>([])
+  const [incomes, setIncomes] = useState<MoneyIncome[]>([])
   const [invs, setInvs] = useState<Invoice[]>([])
   const [names, setNames] = useState<Record<string, string>>({})
   const [month, setMonth] = useState(today().slice(0, 7))
@@ -1748,6 +1758,12 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
   const [recLabel, setRecLabel] = useState('')
   const [recAmount, setRecAmount] = useState('')
   const [recDay, setRecDay] = useState('1')
+  // 売上（手入力収入）フォーム
+  const [incMonth, setIncMonth] = useState(today().slice(0, 7))
+  const [incLabel, setIncLabel] = useState('')
+  const [incAmount, setIncAmount] = useState('')
+  // 扶養の壁QA: nullは非表示。stepを進めて最後にrec（推奨額）を出す
+  const [wallQA, setWallQA] = useState<{ step: number; rec?: number | null; note?: string } | null>(null)
 
   const load = useCallback(async () => {
     const { data: p } = await supabase.from('money_profiles').select('*')
@@ -1757,7 +1773,7 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
     if (!p) return
     setScope((p as MoneyProfile).stance === 'sole_proprietor' ? 'personal' : 'company')
     const president = (p as MoneyProfile).stance === 'president' && me.role === 'admin'
-    const [{ data: exps }, { data: invRows }, { data: rows }, { data: recRows }, { data: comp }] = await Promise.all([
+    const [{ data: exps }, { data: invRows }, { data: rows }, { data: recRows }, { data: comp }, { data: incRows }] = await Promise.all([
       // RLSで見える範囲＝自分の全経費＋（管理者なら）会社提出分
       supabase.from('money_expenses').select('*').order('occurred_on', { ascending: false }),
       president
@@ -1766,7 +1782,9 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
       supabase.from('members').select('id, name').eq('company_id', me.company_id),
       supabase.from('money_recurring').select('*').eq('member_id', me.id).order('created_at'),
       supabase.from('companies').select('expense_budget').eq('id', me.company_id).maybeSingle(),
+      supabase.from('money_incomes').select('*').eq('member_id', me.id).order('month'),
     ])
+    setIncomes((incRows as MoneyIncome[]) ?? [])
     const memberRows = (rows as Pick<Member, 'id' | 'name'>[]) ?? []
     const ids = new Set(memberRows.map((m) => m.id))
     setNames(Object.fromEntries(memberRows.map((m) => [m.id, m.name])))
@@ -1903,6 +1921,31 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
     setBudget(n || null)
   }
 
+  const addIncome = async () => {
+    const amt = Math.round(Number(incAmount.replace(/[,¥\s]/g, '')))
+    if (!incLabel || !amt) return
+    const { error } = await supabase.from('money_incomes').insert({
+      company_id: me.company_id, member_id: me.id, month: incMonth, label: incLabel, amount: amt,
+    })
+    if (error) return setErr(`売上を登録できませんでした（${error.message}）`)
+    setIncLabel(''); setIncAmount('')
+    load()
+  }
+
+  const removeIncome = async (i: MoneyIncome) => {
+    if (!confirm(`売上「${i.label}」を削除しますか？`)) return
+    await supabase.from('money_incomes').delete().eq('id', i.id)
+    load()
+  }
+
+  const saveWall = async (v: number | null) => {
+    if (!profile) return
+    const { error } = await supabase.from('money_profiles').update({ wall_amount: v }).eq('id', profile.id)
+    if (error) return setErr(`保存できませんでした（${error.message}）`)
+    setProfile({ ...profile, wall_amount: v })
+    setWallQA(null)
+  }
+
   const removeExpense = async (e: MoneyExpense) => {
     if (!confirm(`「${e.label}」を削除しますか？`)) return
     if (e.receipt_path) await supabase.storage.from('receipts').remove([e.receipt_path])
@@ -1930,6 +1973,9 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
     const rows = [['日付', '区分', '項目', '金額']]
     for (const v of invs.filter((v) => v.member_id === me.id && v.status === 'paid' && v.month.startsWith(year))) {
       rows.push([`${v.month}-01`, '収入', `業務委託料（${v.month.replace('-', '年')}月分）`, String(invoiceTotal(v))])
+    }
+    for (const i of incomes.filter((i) => i.month.startsWith(year))) {
+      rows.push([`${i.month}-01`, '収入', i.label, String(i.amount)])
     }
     for (const e of expenses.filter((e) => e.member_id === me.id && e.occurred_on.startsWith(year))) {
       rows.push([e.occurred_on, '経費', e.label, String(-e.amount)])
@@ -2105,6 +2151,7 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
         const paidSum = monthPaid.reduce((s, v) => s + invoiceTotal(v), 0)
         const myMonthInvs = myInvs.filter((v) => v.month === month)
         const incomeSum = myMonthInvs.filter((v) => v.status === 'paid').reduce((s, v) => s + invoiceTotal(v), 0)
+          + incomes.filter((i) => i.month === month).reduce((s, i) => s + i.amount, 0)
         return (
           <div className="card">
             <h2>
@@ -2188,6 +2235,7 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
                   const prevMonth = new Date(y, mo - 2, 1).toLocaleDateString('sv-SE').slice(0, 7)
                   const prevExp = source.filter((e) => e.occurred_on.startsWith(prevMonth)).reduce((s, e) => s + e.amount, 0)
                   const prevInc = myInvs.filter((v) => v.month === prevMonth && v.status === 'paid').reduce((s, v) => s + invoiceTotal(v), 0)
+                    + incomes.filter((i) => i.month === prevMonth).reduce((s, i) => s + i.amount, 0)
                   const profit = incomeSum - monthTotal
                   const prevProfit = prevInc - prevExp
                   const diff = profit - prevProfit
@@ -2242,6 +2290,167 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
                 </details>
               )
             })()}
+          </div>
+        )
+      })()}
+
+      {/* 年間の収支: 月ごとの売上・経費と扶養の壁チェック */}
+      {!isPresident && (() => {
+        const year = month.slice(0, 4)
+        const incomeOf = (m: string) =>
+          myInvs.filter((v) => v.month === m && v.status === 'paid').reduce((s, v) => s + invoiceTotal(v), 0)
+          + incomes.filter((i) => i.month === m).reduce((s, i) => s + i.amount, 0)
+        const expenseOf = (m: string) =>
+          expenses.filter((e) => e.member_id === me.id && e.occurred_on.startsWith(m)).reduce((s, e) => s + e.amount, 0)
+        const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`)
+        const yearIncome = months.reduce((s, m) => s + incomeOf(m), 0)
+        const yearExpense = months.reduce((s, m) => s + expenseOf(m), 0)
+        // 壁チェック: 今のペース＝経過月の平均×12。年をまたいで見ている場合は12ヶ月確定
+        const wall = profile.wall_amount
+        const monthsElapsed = year === today().slice(0, 4) ? Number(today().slice(5, 7)) : 12
+        const projected = monthsElapsed > 0 ? Math.round((yearIncome / monthsElapsed) * 12) : 0
+        const manYen = (v: number) => v % 10000 === 0 ? `${v / 10000}万円` : yen(v)
+        const wallLabel = wall ? (WALLS.find(([a]) => a === wall)?.[1] ?? manYen(wall)).split(':')[0] : ''
+        // QA: 答えに応じて推奨の壁を出す
+        const qaSteps = [
+          { q: '親や配偶者の扶養に入っていますか？', yes: { step: 1 }, no: { step: 9, rec: null, note: '扶養に入っていなければ、壁は気にせず稼いでOKです' } },
+          { q: '学生ですか？', yes: { step: 9, rec: 1300000, note: '学生は所得税側の控除が150万円まで広がりましたが、親の社会保険の扶養から外れる130万円が先に来ます' }, no: { step: 2 } },
+          { q: '勤務先は従業員51人以上で、週20時間以上働いていますか？', yes: { step: 9, rec: 1060000, note: 'この条件だと106万円前後で社会保険の加入対象になります' }, no: { step: 9, rec: 1230000, note: '所得税がかかり始める123万円が目安です（社会保険は130万円）' } },
+        ]
+        return (
+          <div className="card">
+            <h2>年間の収支 <span className="tag">{year}年 · 売上と経費の照合</span></h2>
+            <div className="plan-table-wrap">
+              <table className="plan-table">
+                <thead><tr><th>月</th><th>売上</th><th>経費</th><th>差引</th></tr></thead>
+                <tbody>
+                  {months.map((m) => {
+                    const inc = incomeOf(m), exp = expenseOf(m)
+                    return (
+                      <tr key={m}>
+                        <td className="pt-date">{Number(m.slice(5))}月</td>
+                        <td className="pt-cell pt-yen">{inc ? yen(inc) : '—'}</td>
+                        <td className="pt-cell pt-yen">{exp ? yen(exp) : '—'}</td>
+                        <td className="pt-cell pt-yen">{inc || exp ? yen(inc - exp) : '—'}</td>
+                      </tr>
+                    )
+                  })}
+                  <tr>
+                    <td className="pt-date"><b>合計</b></td>
+                    <td className="pt-cell pt-yen"><b>{yen(yearIncome)}</b></td>
+                    <td className="pt-cell pt-yen"><b>{yen(yearExpense)}</b></td>
+                    <td className="pt-cell pt-yen"><b>{yen(yearIncome - yearExpense)}</b></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* 売上の手入力（請求書以外の収入） */}
+            <div className="draft-times" style={{ flexWrap: 'wrap', marginTop: 8 }}>
+              <input type="month" aria-label="売上の月" style={{ width: 150 }}
+                value={incMonth} onChange={(e) => setIncMonth(e.target.value)} />
+              <input type="text" placeholder="売上項目（例: バイト代）" style={{ flex: 1, minWidth: 140 }}
+                value={incLabel} onChange={(e) => setIncLabel(e.target.value)} />
+              <input type="text" inputMode="numeric" placeholder="金額" style={{ width: 90 }}
+                value={incAmount} onChange={(e) => setIncAmount(e.target.value)} />
+              <button className="btn-outline" disabled={!incLabel || !Number(incAmount.replace(/[,¥\s]/g, ''))}
+                onClick={addIncome}>売上を追加</button>
+            </div>
+            <div className="notice">請求書（支払済み）は自動で売上に入ります。それ以外の収入はここから追加してください</div>
+            {incomes.filter((i) => i.month.startsWith(year)).length > 0 && (
+              <details className="money-detail">
+                <summary>手入力した売上（{incomes.filter((i) => i.month.startsWith(year)).length}件）</summary>
+                <div className="list">
+                  {incomes.filter((i) => i.month.startsWith(year)).map((i) => (
+                    <div key={i.id} className="list-item">
+                      <div className="when">{i.month.replace('-', '/')}</div>
+                      <div className="title">{i.label}</div>
+                      <span className="dur">{yen(i.amount)}</span>
+                      <button className="link-btn" onClick={() => removeIncome(i)}>削除</button>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            {/* 扶養の壁 */}
+            <h2 style={{ marginTop: 16 }}>扶養の壁 <span className="tag">年収の上限チェック</span></h2>
+            {wall ? (
+              <>
+                <div className="log-row">
+                  <span className="d">壁</span>
+                  <span className="t">{wallLabel}の壁（{WALLS.find(([a]) => a === wall)?.[1].split(': ')[1] ?? '手動設定'}）</span>
+                  <span className="dur">{manYen(wall)}</span>
+                </div>
+                <div className="wall-bar" role="img" aria-label={`年収 ${yen(yearIncome)} / 壁 ${manYen(wall)}`}>
+                  <i style={{ width: `${Math.min(100, (yearIncome / wall) * 100)}%`,
+                    background: yearIncome >= wall ? 'var(--danger)' : projected > wall ? '#c2691c' : 'var(--brand, #00654f)' }} />
+                </div>
+                {yearIncome >= wall ? (
+                  <div className="notice warn">{year}年の売上が{manYen(wall)}を超えています（{yen(yearIncome)}）</div>
+                ) : (
+                  <div className="log-row">
+                    <span className="d">残り</span>
+                    <span className="t">{year}年はあと稼げる額</span>
+                    <span className="dur">{yen(wall - yearIncome)}</span>
+                  </div>
+                )}
+                {yearIncome < wall && projected > wall && (
+                  <div className="notice warn">
+                    今のペース（月平均{yen(Math.round(yearIncome / Math.max(1, monthsElapsed)))}）だと
+                    年間{yen(projected)}になり、{wallLabel}の壁を越えそうです。
+                    残り{12 - monthsElapsed}ヶ月は月{yen(Math.max(0, Math.floor((wall - yearIncome) / Math.max(1, 12 - monthsElapsed))))}以内が目安です
+                  </div>
+                )}
+                <button className="link-btn" onClick={() => setWallQA({ step: 0 })}>壁を診断し直す</button>
+              </>
+            ) : (
+              !wallQA && (
+                <>
+                  <div className="notice">
+                    {profile.wall_amount === null && 'いくらまで稼いでいいか、いくつかの質問で診断できます'}
+                  </div>
+                  <button className="btn-outline" onClick={() => setWallQA({ step: 0 })}>壁を診断する</button>
+                </>
+              )
+            )}
+            {wallQA && (wallQA.step < 9 ? (
+              <div className="wall-qa">
+                <div className="notice">{qaSteps[wallQA.step].q}</div>
+                <div className="draft-times">
+                  <button className="btn-outline" onClick={() => setWallQA(qaSteps[wallQA.step].yes)}>はい</button>
+                  <button className="btn-outline" onClick={() => setWallQA(qaSteps[wallQA.step].no)}>いいえ</button>
+                  <button className="link-btn" onClick={() => setWallQA(null)}>やめる</button>
+                </div>
+              </div>
+            ) : (
+              <div className="wall-qa">
+                <div className="notice">
+                  {wallQA.rec ? `おすすめの壁: ${manYen(wallQA.rec)}。` : ''}{wallQA.note}
+                </div>
+                <div className="draft-times" style={{ flexWrap: 'wrap' }}>
+                  {wallQA.rec != null && (
+                    <button className="btn-primary" style={{ margin: 0 }}
+                      onClick={() => saveWall(wallQA.rec!)}>{manYen(wallQA.rec)}で設定</button>
+                  )}
+                  {wallQA.rec == null && (
+                    <button className="btn-primary" style={{ margin: 0 }} onClick={() => saveWall(null)}>壁なしにする</button>
+                  )}
+                  <button className="link-btn" onClick={() => setWallQA(null)}>やめる</button>
+                </div>
+                <details className="money-detail">
+                  <summary>自分で壁を選ぶ</summary>
+                  <div className="list">
+                    {WALLS.map(([a, desc]) => (
+                      <div key={a} className="list-item">
+                        <div className="title">{desc}</div>
+                        <button className="link-btn" onClick={() => saveWall(a)}>設定</button>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              </div>
+            ))}
           </div>
         )
       })()}
