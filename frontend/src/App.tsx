@@ -2421,6 +2421,7 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
         return (
           <div className="card">
             <h2>年間の収支 <span className="tag">{year}年 · 売上と経費の照合</span></h2>
+            <div className="money-year-grid">
             <div className="plan-table-wrap">
               <table className="plan-table">
                 <thead><tr><th>月</th><th>売上</th><th>経費</th><th>差引</th></tr></thead>
@@ -2455,7 +2456,37 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
                 </tbody>
               </table>
             </div>
-            <div className="notice">請求書（支払済み）は自動で売上に入ります。それ以外の収入は表の最下行から追加してください</div>
+            {/* 右: 月別の売上・経費グラフ */}
+            <div className="money-year-chart-wrap">
+              {(() => {
+                const maxV = Math.max(1, ...months.map((m) => Math.max(incomeOf(m), expenseOf(m))))
+                const h = (v: number) => (v / maxV) * 170
+                return (
+                  <svg viewBox="0 0 380 220" className="money-year-chart" role="img"
+                    aria-label={`${year}年の月別売上と経費のグラフ`}>
+                    {months.map((m, i) => {
+                      const inc = incomeOf(m), exp = expenseOf(m)
+                      const x = 12 + i * 30
+                      return (
+                        <g key={m}>
+                          <rect x={x} y={195 - h(inc)} width={12} height={h(inc)} rx={2} fill="#007f66" />
+                          <rect x={x + 13} y={195 - h(exp)} width={12} height={h(exp)} rx={2} fill="#c2447e" />
+                          <text x={x + 13} y={210} textAnchor="middle" fontSize="10" fill="currentColor" opacity=".6">
+                            {Number(m.slice(5))}
+                          </text>
+                        </g>
+                      )
+                    })}
+                  </svg>
+                )
+              })()}
+              <div className="money-legend-row" style={{ justifyContent: 'center' }}>
+                <i style={{ background: '#007f66' }} /><span className="g">売上</span>
+                <i style={{ background: '#c2447e', marginLeft: 12 }} /><span className="g">経費</span>
+              </div>
+            </div>
+            </div>
+            <div className="notice">請求書（支払済み）は自動で売上に入ります。売上・経費のセルは押してそのまま入力できます</div>
             {incomes.filter((i) => i.month.startsWith(year)).length > 0 && (
               <details className="money-detail">
                 <summary>手入力した売上（{incomes.filter((i) => i.month.startsWith(year)).length}件）</summary>
