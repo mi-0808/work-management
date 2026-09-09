@@ -2383,11 +2383,31 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
                 <tbody>
                   {months.map((m) => {
                     const inc = incomeOf(m), exp = expenseOf(m)
+                    // 金額セルに直接入力→その月の売上/経費として登録（Excel風。過去の月もOK）
+                    const cellAdd = (onAdd: (amt: number) => void) => ({
+                      onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
+                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) e.currentTarget.blur()
+                      },
+                      onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
+                        const v = Math.round(Number(e.target.value.replace(/[,¥\s]/g, '')))
+                        if (v > 0) { onAdd(v); e.target.value = '' }
+                      },
+                    })
                     return (
                       <tr key={m}>
                         <td className="pt-date">{Number(m.slice(5))}月</td>
-                        <td className="pt-cell pt-yen">{inc ? yen(inc) : '—'}</td>
-                        <td className="pt-cell pt-yen">{exp ? yen(exp) : '—'}</td>
+                        <td className="pt-cell pt-yen">
+                          {inc ? <span className="pt-cell-sum">{yen(inc)}</span> : null}
+                          <input type="text" inputMode="numeric" className="pt-mini pt-cell-add" placeholder="＋"
+                            aria-label={`${Number(m.slice(5))}月の売上を追加`}
+                            {...cellAdd((v) => addIncome(m, '売上', v))} />
+                        </td>
+                        <td className="pt-cell pt-yen">
+                          {exp ? <span className="pt-cell-sum">{yen(exp)}</span> : null}
+                          <input type="text" inputMode="numeric" className="pt-mini pt-cell-add" placeholder="＋"
+                            aria-label={`${Number(m.slice(5))}月の経費を追加`}
+                            {...cellAdd((v) => addExpenseInline(`${m}-01`, '経費', v))} />
+                        </td>
                         <td className="pt-cell pt-yen">{inc || exp ? yen(inc - exp) : '—'}</td>
                       </tr>
                     )
