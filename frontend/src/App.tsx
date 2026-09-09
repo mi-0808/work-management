@@ -2484,6 +2484,96 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
                 <i style={{ background: '#007f66' }} /><span className="g">売上</span>
                 <i style={{ background: '#c2447e', marginLeft: 12 }} /><span className="g">経費</span>
               </div>
+
+              {/* グラフ下のサマリー: 利益・月平均・扶養の壁 */}
+              <div className="log-row">
+                <span className="d">利益</span>
+                <span className="t">{year}年の売上 − 経費</span>
+                <span className="dur">{yen(yearIncome - yearExpense)}</span>
+              </div>
+              <div className="log-row">
+                <span className="d">平均</span>
+                <span className="t">月平均の売上（{monthsElapsed}ヶ月）</span>
+                <span className="dur">{yen(Math.round(yearIncome / Math.max(1, monthsElapsed)))}</span>
+              </div>
+              {/* 扶養の壁 */}
+              <h2 style={{ marginTop: 16 }}>扶養の壁 <span className="tag">年収の上限チェック</span></h2>
+              {wall ? (
+                <>
+                  <div className="log-row">
+                    <span className="d">壁</span>
+                    <span className="t">{wallLabel}の壁（{WALLS.find(([a]) => a === wall)?.[1].split(': ')[1] ?? '手動設定'}）</span>
+                    <span className="dur">{manYen(wall)}</span>
+                  </div>
+                  <div className="wall-bar" role="img" aria-label={`年収 ${yen(yearIncome)} / 壁 ${manYen(wall)}`}>
+                    <i style={{ width: `${Math.min(100, (yearIncome / wall) * 100)}%`,
+                      background: yearIncome >= wall ? 'var(--danger)' : projected > wall ? '#c2691c' : 'var(--brand, #00654f)' }} />
+                  </div>
+                  {yearIncome >= wall ? (
+                    <div className="notice warn">{year}年の売上が{manYen(wall)}を超えています（{yen(yearIncome)}）</div>
+                  ) : (
+                    <div className="log-row">
+                      <span className="d">残り</span>
+                      <span className="t">{year}年はあと稼げる額</span>
+                      <span className="dur">{yen(wall - yearIncome)}</span>
+                    </div>
+                  )}
+                  {yearIncome < wall && projected > wall && (
+                    <div className="notice warn">
+                      今のペース（月平均{yen(Math.round(yearIncome / Math.max(1, monthsElapsed)))}）だと
+                      年間{yen(projected)}になり、{wallLabel}の壁を越えそうです。
+                      残り{12 - monthsElapsed}ヶ月は月{yen(Math.max(0, Math.floor((wall - yearIncome) / Math.max(1, 12 - monthsElapsed))))}以内が目安です
+                    </div>
+                  )}
+                  <button className="link-btn" onClick={() => setWallQA({ step: 0 })}>壁を診断し直す</button>
+                </>
+              ) : (
+                !wallQA && (
+                  <>
+                    <div className="notice">
+                      {profile.wall_amount === null && 'いくらまで稼いでいいか、いくつかの質問で診断できます'}
+                    </div>
+                    <button className="btn-outline" onClick={() => setWallQA({ step: 0 })}>壁を診断する</button>
+                  </>
+                )
+              )}
+              {wallQA && (wallQA.step < 9 ? (
+                <div className="wall-qa">
+                  <div className="notice">{qaSteps[wallQA.step].q}</div>
+                  <div className="draft-times">
+                    <button className="btn-outline" onClick={() => setWallQA(qaSteps[wallQA.step].yes)}>はい</button>
+                    <button className="btn-outline" onClick={() => setWallQA(qaSteps[wallQA.step].no)}>いいえ</button>
+                    <button className="link-btn" onClick={() => setWallQA(null)}>やめる</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="wall-qa">
+                  <div className="notice">
+                    {wallQA.rec ? `おすすめの壁: ${manYen(wallQA.rec)}。` : ''}{wallQA.note}
+                  </div>
+                  <div className="draft-times" style={{ flexWrap: 'wrap' }}>
+                    {wallQA.rec != null && (
+                      <button className="btn-primary" style={{ margin: 0 }}
+                        onClick={() => saveWall(wallQA.rec!)}>{manYen(wallQA.rec)}で設定</button>
+                    )}
+                    {wallQA.rec == null && (
+                      <button className="btn-primary" style={{ margin: 0 }} onClick={() => saveWall(null)}>壁なしにする</button>
+                    )}
+                    <button className="link-btn" onClick={() => setWallQA(null)}>やめる</button>
+                  </div>
+                  <details className="money-detail">
+                    <summary>自分で壁を選ぶ</summary>
+                    <div className="list">
+                      {WALLS.map(([a, desc]) => (
+                        <div key={a} className="list-item">
+                          <div className="title">{desc}</div>
+                          <button className="link-btn" onClick={() => saveWall(a)}>設定</button>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                </div>
+              ))}
             </div>
             </div>
             <div className="notice">請求書（支払済み）は自動で売上に入ります。売上・経費のセルは押してそのまま入力できます</div>
@@ -2503,84 +2593,6 @@ function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
               </details>
             )}
 
-            {/* 扶養の壁 */}
-            <h2 style={{ marginTop: 16 }}>扶養の壁 <span className="tag">年収の上限チェック</span></h2>
-            {wall ? (
-              <>
-                <div className="log-row">
-                  <span className="d">壁</span>
-                  <span className="t">{wallLabel}の壁（{WALLS.find(([a]) => a === wall)?.[1].split(': ')[1] ?? '手動設定'}）</span>
-                  <span className="dur">{manYen(wall)}</span>
-                </div>
-                <div className="wall-bar" role="img" aria-label={`年収 ${yen(yearIncome)} / 壁 ${manYen(wall)}`}>
-                  <i style={{ width: `${Math.min(100, (yearIncome / wall) * 100)}%`,
-                    background: yearIncome >= wall ? 'var(--danger)' : projected > wall ? '#c2691c' : 'var(--brand, #00654f)' }} />
-                </div>
-                {yearIncome >= wall ? (
-                  <div className="notice warn">{year}年の売上が{manYen(wall)}を超えています（{yen(yearIncome)}）</div>
-                ) : (
-                  <div className="log-row">
-                    <span className="d">残り</span>
-                    <span className="t">{year}年はあと稼げる額</span>
-                    <span className="dur">{yen(wall - yearIncome)}</span>
-                  </div>
-                )}
-                {yearIncome < wall && projected > wall && (
-                  <div className="notice warn">
-                    今のペース（月平均{yen(Math.round(yearIncome / Math.max(1, monthsElapsed)))}）だと
-                    年間{yen(projected)}になり、{wallLabel}の壁を越えそうです。
-                    残り{12 - monthsElapsed}ヶ月は月{yen(Math.max(0, Math.floor((wall - yearIncome) / Math.max(1, 12 - monthsElapsed))))}以内が目安です
-                  </div>
-                )}
-                <button className="link-btn" onClick={() => setWallQA({ step: 0 })}>壁を診断し直す</button>
-              </>
-            ) : (
-              !wallQA && (
-                <>
-                  <div className="notice">
-                    {profile.wall_amount === null && 'いくらまで稼いでいいか、いくつかの質問で診断できます'}
-                  </div>
-                  <button className="btn-outline" onClick={() => setWallQA({ step: 0 })}>壁を診断する</button>
-                </>
-              )
-            )}
-            {wallQA && (wallQA.step < 9 ? (
-              <div className="wall-qa">
-                <div className="notice">{qaSteps[wallQA.step].q}</div>
-                <div className="draft-times">
-                  <button className="btn-outline" onClick={() => setWallQA(qaSteps[wallQA.step].yes)}>はい</button>
-                  <button className="btn-outline" onClick={() => setWallQA(qaSteps[wallQA.step].no)}>いいえ</button>
-                  <button className="link-btn" onClick={() => setWallQA(null)}>やめる</button>
-                </div>
-              </div>
-            ) : (
-              <div className="wall-qa">
-                <div className="notice">
-                  {wallQA.rec ? `おすすめの壁: ${manYen(wallQA.rec)}。` : ''}{wallQA.note}
-                </div>
-                <div className="draft-times" style={{ flexWrap: 'wrap' }}>
-                  {wallQA.rec != null && (
-                    <button className="btn-primary" style={{ margin: 0 }}
-                      onClick={() => saveWall(wallQA.rec!)}>{manYen(wallQA.rec)}で設定</button>
-                  )}
-                  {wallQA.rec == null && (
-                    <button className="btn-primary" style={{ margin: 0 }} onClick={() => saveWall(null)}>壁なしにする</button>
-                  )}
-                  <button className="link-btn" onClick={() => setWallQA(null)}>やめる</button>
-                </div>
-                <details className="money-detail">
-                  <summary>自分で壁を選ぶ</summary>
-                  <div className="list">
-                    {WALLS.map(([a, desc]) => (
-                      <div key={a} className="list-item">
-                        <div className="title">{desc}</div>
-                        <button className="link-btn" onClick={() => saveWall(a)}>設定</button>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              </div>
-            ))}
           </div>
         )
       })()}
