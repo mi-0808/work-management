@@ -149,6 +149,7 @@ const tables: Record<string, Record<string, unknown>[]> = {
   next_actions: next_actions as unknown as Record<string, unknown>[],
   goal_evaluations: goal_evaluations as unknown as Record<string, unknown>[],
   feedback_posts: feedback_posts as unknown as Record<string, unknown>[],
+  announcements: [{ id: uid(), company_id: 'c1', author_member_id: 'm1', body: '今月の稼働予定は25日までに入力してください', created_at: at(dayOffset(-1), 10) }],
 }
 
 type Row = Record<string, unknown>

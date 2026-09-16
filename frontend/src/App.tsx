@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isProviderEnabled, supabase, today } from './lib/supabase'
 import { DEMO, DEMO_MEMBERS } from './lib/demo'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import type { Attendance, Break, FeedbackPost, Goal, GoalEvaluation, Invoice, Member, MoneyExpense, MoneyIncome, MoneyProfile, MoneyRecurring, NextAction, Report as ReportRow, Schedule as ScheduleRow } from './lib/supabase'
+import type { Attendance, Break, FeedbackPost, Goal, GoalEvaluation, Invoice, Member, MoneyExpense, MoneyIncome, MoneyProfile, MoneyRecurring, NextAction, Report as ReportRow, Announcement } from './lib/supabase'
 
-type Tab = 'home' | 'report' | 'schedule' | 'profile'
+type Tab = 'home' | 'calendar' | 'timecard' | 'profile'
 
 const fmtTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'
@@ -19,10 +19,6 @@ const hmToIso = (t: string) => {
   return d.toISOString()
 }
 const hm = (t: string) => t.slice(0, 5) // "09:00:00" → "09:00"
-const toMin = (t: string) => {
-  const [h, m] = t.split(':').map(Number)
-  return h * 60 + m
-}
 
 // 休憩の合計（分）。終了していない休憩は今まで経過した分を数える
 const breakMinutes = (breaks: Break[] = [], now = Date.now()) =>
@@ -41,6 +37,12 @@ const workedMinutes = (a: Attendance, now = Date.now()) => {
 
 const asHm = (min: number) => `${Math.floor(min / 60)}時間${String(Math.round(min % 60)).padStart(2, '0')}分`
 const workedLabel = (a: Attendance) => asHm(workedMinutes(a))
+// その日が属する週（月曜始まり）の月曜日 "YYYY-MM-DD"
+const weekOf = (date: string) => {
+  const d = new Date(date + 'T00:00')
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7))
+  return d.toLocaleDateString('sv-SE')
+}
 
 function useClock() {
   const [now, setNow] = useState(new Date())
@@ -51,48 +53,9 @@ function useClock() {
   return now
 }
 
-// 動画をアップロードして公開URLを返す（本番はSupabase Storage、デモはblob URL）
-const uploadVideo = async (memberId: string, file: File) => {
-  const path = `${memberId}/${Date.now()}-${file.name}`
-  const { error } = await supabase.storage.from('videos').upload(path, file)
-  if (error) throw new Error(error.message)
-  return supabase.storage.from('videos').getPublicUrl(path).data.publicUrl
-}
-
-// URLとして再生できる値か（旧データはファイル名だけが入っている）
-const playable = (v: string | null): v is string => !!v && v.includes(':')
-
-// 会社のMyHood投稿先URL（管理者が名簿タブで設定。未設定ならnull）
-function useMyhood(companyId: string) {
-  const [url, setUrl] = useState<string | null>(null)
-  useEffect(() => {
-    supabase.from('companies').select('myhood_url').eq('id', companyId).maybeSingle()
-      .then(({ data }) => setUrl((data as { myhood_url?: string | null } | null)?.myhood_url ?? null))
-  }, [companyId])
-  return url
-}
 
 /* ---------- 認証 ---------- */
-// カレンダー同期用にrefresh_tokenが必要なので、offline + consent + カレンダーscopeを常に要求
-const googleOAuthOptions = {
-  redirectTo: location.origin,
-  scopes: 'https://www.googleapis.com/auth/calendar.events',
-  queryParams: { access_type: 'offline', prompt: 'consent' },
-}
-
-// 予定をGoogleカレンダーへ同期（fire-and-forget。失敗しても予定保存は成立している）
-const gcalSync = (schedule_id: string, action: 'upsert' | 'delete' = 'upsert') => {
-  supabase.functions.invoke('gcal-sync', { body: { schedule_id, action } }).catch(() => {})
-}
-
-// 目標・ネクストアクションの期日をGoogleカレンダーの終日イベントへ同期（fire-and-forget）
-const dueSync = (kind: 'goal' | 'next_action', id: string, action: 'upsert' | 'delete' = 'upsert') =>
-  supabase.functions.invoke('due-sync', { body: { kind, id, action } }).catch(() => {})
-
-// Meetバッジ。同期済みでリンクがあればそのまま参加できる
-const MeetBadge = ({ e }: { e: ScheduleRow }) => !e.with_meet ? null : e.meet_url
-  ? <a className="badge badge-blue" href={e.meet_url} target="_blank" rel="noreferrer">Meet</a>
-  : <span className="badge badge-blue">Meet</span>
+const googleOAuthOptions = { redirectTo: location.origin }
 
 // DayDeedのブランドマーク: 編み込まれるDD+青の打刻点(ダーク角丸バッジ)
 const DayDeedLogo = ({ size = 34 }: { size?: number }) => (
@@ -393,130 +356,8 @@ function Onboarding({ email, onDone }: { email: string; onDone: () => void }) {
   )
 }
 
-/* ---------- 今日のミーティング（予定タブのカレンダーから当日の確定分だけ） ---------- */
-function TodayMeetings({ me }: { me: Member }) {
-  const [events, setEvents] = useState<ScheduleRow[]>([])
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.from('schedules').select('*')
-        .eq('company_id', me.company_id).eq('status', 'confirmed')
-      const t = today()
-      setEvents(((data as ScheduleRow[]) ?? [])
-        .filter((e) => new Date(e.starts_at).toLocaleDateString('sv-SE') === t)
-        .sort((a, b) => (a.starts_at < b.starts_at ? -1 : 1)))
-    })()
-  }, [me.company_id])
-  const hm2 = (iso: string) => new Date(iso).toTimeString().slice(0, 5)
-  return (
-    <div className="card">
-      <h2>今日のミーティング</h2>
-      {events.length === 0 ? <div className="empty">今日の予定はありません</div> : (
-        <div className="list">
-          {events.map((e) => (
-            <div key={e.id} className="list-item">
-              <div className="when">{hm2(e.starts_at)}–{hm2(e.ends_at)}</div>
-              <div className="title">{e.title}</div>
-              <MeetBadge e={e} />
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/* ---------- 今週の予定（天気予報風ストリップ＋選択日の詳細） ---------- */
-function WeekPlan({ me }: { me: Member }) {
-  const [events, setEvents] = useState<ScheduleRow[]>([])
-  const [plans, setPlans] = useState<ReportRow[]>([])
-  const [sel, setSel] = useState(today())
-
-  useEffect(() => {
-    (async () => {
-      const until = new Date(); until.setDate(until.getDate() + 14)
-      const [{ data: ev }, { data: reps }] = await Promise.all([
-        supabase.from('schedules').select('*')
-          .eq('company_id', me.company_id).eq('status', 'confirmed'),
-        supabase.from('daily_reports').select('*').eq('member_id', me.id)
-          .gte('work_date', today()).lt('work_date', until.toLocaleDateString('sv-SE')),
-      ])
-      setEvents(((ev as ScheduleRow[]) ?? []).sort((a, b) => (a.starts_at < b.starts_at ? -1 : 1)))
-      setPlans((reps as ReportRow[]) ?? [])
-    })()
-  }, [me.company_id, me.id])
-
-  const hm2 = (iso: string) => new Date(iso).toTimeString().slice(0, 5)
-  const evDay = (e: ScheduleRow) => new Date(e.starts_at).toLocaleDateString('sv-SE')
-  const days = Array.from({ length: 14 }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() + i)
-    const date = d.toLocaleDateString('sv-SE')
-    const rep = plans.find((r) => r.work_date === date)
-    const dow = d.getDay()
-    // 稼働時間: 稼働予定表に書いてあればそれ。なければ平日は所定、土日は休み扱い
-    const range = rep?.planned_start && rep?.planned_end
-      ? `${rep.planned_start.slice(0, 5).replace(/^0/, '')}–${rep.planned_end.slice(0, 5).replace(/^0/, '')}`
-      : (dow === 0 || dow === 6) ? null
-      : `${hm(me.work_start).replace(/^0/, '')}–${hm(me.work_end).replace(/^0/, '')}`
-    return { date, d, rep, range, meetings: events.filter((e) => evDay(e) === date) }
-  })
-  const selDay = days.find((x) => x.date === sel) ?? days[0]
-
-  return (
-    <div className="card">
-      <h2>今週の予定</h2>
-      <div className="week-strip" role="tablist" aria-label="日付を選択">
-        {days.map((x, i) => (
-          <button key={x.date} role="tab" aria-selected={x.date === sel}
-            className={`ws-day ${x.date === sel ? 'sel' : ''} ${x.range ? '' : 'off'}`}
-            onClick={() => setSel(x.date)}>
-            <span className="ws-dow">{i === 0 ? '今日' : '日月火水木金土'[x.d.getDay()]}</span>
-            <span className="ws-date">{x.d.getMonth() + 1}/{x.d.getDate()}</span>
-            <span className="ws-range">{x.range ?? '休み'}</span>
-            <span className="ws-dots" aria-label={`予定${x.meetings.length}件`}>
-              {x.meetings.length ? '●'.repeat(Math.min(x.meetings.length, 3)) : '–'}
-            </span>
-          </button>
-        ))}
-      </div>
-      <div className="week-detail">
-        <div className="wd-head">
-          {selDay.d.getMonth() + 1}/{selDay.d.getDate()}({'日月火水木金土'[selDay.d.getDay()]}) の詳細
-          <span className="tag">{selDay.range ? `稼働 ${selDay.range}` : '休み'}</span>
-        </div>
-        {selDay.meetings.map((e) => (
-          <div key={e.id} className="wd-row">
-            <b>{hm2(e.starts_at)}–{hm2(e.ends_at)}</b>
-            <span>{e.title}</span>
-            <MeetBadge e={e} />
-          </div>
-        ))}
-        {selDay.meetings.length === 0 && <div className="wd-row empty-inline">ミーティングはありません</div>}
-        {selDay.rep?.plan && <div className="wd-plan">やること: {selDay.rep.plan}</div>}
-      </div>
-    </div>
-  )
-}
-
-/* ---------- 今日のミーティング⇄今週の予定の切り替え表示 ---------- */
-function MeetingsWeek({ me }: { me: Member }) {
-  const [view, setView] = useState<'today' | 'week'>('today')
-  return (
-    <>
-      <div className="seg-row" role="tablist" aria-label="予定の切り替え">
-        <button role="tab" aria-selected={view === 'today'}
-          className={`preset-chip ${view === 'today' ? 'sel' : ''}`}
-          onClick={() => setView('today')}>今日</button>
-        <button role="tab" aria-selected={view === 'week'}
-          className={`preset-chip ${view === 'week' ? 'sel' : ''}`}
-          onClick={() => setView('week')}>今週</button>
-      </div>
-      {view === 'today' ? <TodayMeetings me={me} /> : <WeekPlan me={me} />}
-    </>
-  )
-}
-
 /* ---------- 出勤・退勤 ---------- */
-function Home({ me }: { me: Member }) {
+function Home({ me, onOpenMember }: { me: Member; onOpenMember: (m: Member) => void }) {
   const now = useClock()
   const [att, setAtt] = useState<Attendance | null>(null)
   const [plan, setPlan] = useState('')
@@ -796,8 +637,138 @@ function Home({ me }: { me: Member }) {
         )}
       </div>
 
-      <MeetingsWeek me={me} />
-      <PlanKintai me={me} />
+      <HomeDashboard me={me} onOpenMember={onOpenMember} />
+    </>
+  )
+}
+
+
+/* ---------- ホームの要約（今週・今月・給与見込み／やること／お知らせ／管理者はメンバー一覧） ---------- */
+function HomeDashboard({ me, onOpenMember }: { me: Member; onOpenMember: (m: Member) => void }) {
+  const [atts, setAtts] = useState<Attendance[]>([])
+  const [plans, setPlans] = useState<ReportRow[]>([])
+  const [todos, setTodos] = useState<NextAction[]>([])
+  const [news, setNews] = useState<Announcement[] | null>(null) // null = テーブル未作成など取得失敗
+  const [members, setMembers] = useState<Member[]>([])
+  const [draft, setDraft] = useState('')
+  const t = today()
+  const month = t.slice(0, 7)
+  const wk = weekOf(t)
+  const from = wk < `${month}-01` ? wk : `${month}-01`
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(wk + 'T00:00'); d.setDate(d.getDate() + i); return d.toLocaleDateString('sv-SE')
+  })
+
+  const loadNews = useCallback(async () => {
+    const { data, error } = await supabase.from('announcements').select('*').eq('company_id', me.company_id)
+      .order('created_at', { ascending: false }).limit(5)
+    setNews(error ? null : (data as Announcement[]) ?? [])
+  }, [me.company_id])
+
+  useEffect(() => {
+    Promise.all([
+      supabase.from('attendances').select('*, breaks(*)').eq('member_id', me.id).gte('work_date', from),
+      supabase.from('daily_reports').select('*').eq('member_id', me.id).gte('work_date', wk),
+      supabase.from('next_actions').select('*').eq('member_id', me.id),
+    ]).then(([{ data: a }, { data: r }, { data: n }]) => {
+      setAtts((a as Attendance[]) ?? [])
+      setPlans((r as ReportRow[]) ?? [])
+      setTodos(((n as NextAction[]) ?? []).filter((x) => x.status !== 'done')
+        .sort((p, q) => (p.due_date ?? '9999') < (q.due_date ?? '9999') ? -1 : 1).slice(0, 3))
+    })
+    loadNews()
+    if (me.role === 'admin') {
+      supabase.from('members').select('*').eq('company_id', me.company_id).eq('status', 'active').order('created_at')
+        .then(({ data }) => setMembers(((data as Member[] | null) ?? []).filter((m) => m.id !== me.id)))
+    }
+  }, [me.id, me.company_id, me.role, from, wk, loadNews])
+
+  const done = atts.filter((a) => a.clock_in) // 勤務中の今日も今までの分を数える（プロフィールの稼働と請求と揃える）
+  const minOf = (d: string) => done.filter((a) => a.work_date === d).reduce((sum, a) => sum + workedMinutes(a), 0)
+  const weekMin = weekDays.reduce((sum, d) => sum + minOf(d), 0)
+  const monthMin = done.filter((a) => a.work_date.startsWith(month)).reduce((sum, a) => sum + workedMinutes(a), 0)
+  // 今日以降の平日で稼働予定が未入力の日
+  const unplanned = weekDays.filter((d) => d >= t && new Date(d + 'T00:00').getDay() % 6 !== 0
+    && !plans.find((r) => r.work_date === d && (r.planned_start || r.plan)))
+
+  const post = async () => {
+    if (!draft.trim()) return
+    const { error } = await supabase.from('announcements')
+      .insert({ company_id: me.company_id, author_member_id: me.id, body: draft.trim(), created_at: new Date().toISOString() })
+    if (error) return alert(`配信できませんでした（${error.message}）`)
+    setDraft(''); loadNews()
+  }
+
+  return (
+    <>
+      <div className="home-stats">
+        <div><span>今週</span><b>{hmm(weekMin)}</b></div>
+        <div><span>今月</span><b>{hmm(monthMin)}</b></div>
+        {me.hourly_rate > 0 && <div><span>給与見込み</span><b>{yen(monthMin / 60 * me.hourly_rate)}</b></div>}
+      </div>
+
+      <div className="week-strip">
+        {weekDays.map((d) => (
+          <div key={d} className={d === t ? 'today' : ''}>
+            <span>{'月火水木金土日'[weekDays.indexOf(d)]}</span>
+            <b>{minOf(d) ? hmm(minOf(d)) : '–'}</b>
+          </div>
+        ))}
+      </div>
+
+      {(unplanned.length > 0 || todos.length > 0) && (
+        <div className="card card-plain">
+          <h2>やること</h2>
+          <div className="list">
+            {unplanned.length > 0 && (
+              <div className="list-item">
+                <span className="badge badge-yellow">予定</span>
+                <div className="title">稼働予定が未入力の日があります（{unplanned.map((d) => d.slice(5).replace('-', '/')).join('・')}）</div>
+              </div>
+            )}
+            {todos.map((n) => (
+              <div key={n.id} className="list-item">
+                <span className="badge badge-blue">{n.due_date ? n.due_date.slice(5).replace('-', '/') : '期日なし'}</span>
+                <div className="title">{n.title}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {news && (news.length > 0 || me.role === 'admin') && (
+        <div className="card card-plain">
+          <h2>お知らせ</h2>
+          {me.role === 'admin' && (
+            <div className="form-actions news-form" style={{ marginBottom: 10 }}>
+              <input placeholder="メンバー全員にお知らせを配信" value={draft} onChange={(e) => setDraft(e.target.value)} />
+              <button className="btn-primary" style={{ margin: 0 }} disabled={!draft.trim()} onClick={post}>配信</button>
+            </div>
+          )}
+          <div className="list">
+            {news.length === 0 ? <div className="empty">お知らせはまだありません</div> : news.map((n) => (
+              <div key={n.id} className="list-item">
+                <div className="when">{n.created_at.slice(5, 10).replace('-', '/')}</div>
+                <div className="title">{n.body}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {members.length > 0 && (
+        <div className="card card-plain">
+          <h2>メンバー <span className="tag">タップで勤怠・支払・経費を見る</span></h2>
+          <div className="member-icons">
+            {members.map((m, i) => (
+              <button key={m.id} className="member-icon" onClick={() => onOpenMember(m)}>
+                <div className="m-avatar" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>{m.name[0]}</div>
+                <div className="name">{m.name}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </>
   )
 }
@@ -871,7 +842,7 @@ function PlanRows({ me }: { me: Member }) {
 
   const [y, m] = month.split('-').map(Number)
   return (
-    <div className="card">
+    <div className="card card-plain">
       <h2>
         稼働予定表
         <span className="month-nav">
@@ -1022,7 +993,7 @@ function KintaiTable({ me }: { me: Member }) {
   const [y, m] = month.split('-').map(Number)
   const days = atts.filter((a) => a.clock_in)
   return (
-    <div className="card">
+    <div className="card card-plain">
       <h2>
         勤怠記録 <span className="tag">出勤・退勤・中抜けの実績</span>
         <span className="month-nav">
@@ -1038,10 +1009,15 @@ function KintaiTable({ me }: { me: Member }) {
               <tr><th>日付</th><th>出勤</th><th>退勤</th><th>中抜け</th><th>実働</th><th></th></tr>
             </thead>
             <tbody>
-              {days.map((a) => {
+              {days.map((a, idx) => {
+                const wk = weekOf(a.work_date)
+                const lastOfWeek = idx === days.length - 1 || weekOf(days[idx + 1].work_date) !== wk
+                const weekMin = days.filter((d) => weekOf(d.work_date) === wk && d.clock_out)
+                  .reduce((sum, d) => sum + workedMinutes(d), 0)
                 const confirmed = reps.find((r) => r.work_date === a.work_date)?.confirmed ?? false
                 return (
-                  <tr key={a.id} className={a.work_date === today() ? 'pt-today' : ''}>
+                  <Fragment key={a.id}>
+                  <tr className={a.work_date === today() ? 'pt-today' : ''}>
                     <td className="pt-date">{fmtDate(a.work_date)}
                       {(a.auto_in || a.auto_out) && <span className="badge badge-yellow">⚠ 自動補完</span>}
                       {savedAt === a.work_date && <span className="pt-saved" role="status">✓保存</span>}</td>
@@ -1101,452 +1077,27 @@ function KintaiTable({ me }: { me: Member }) {
                         onClick={() => toggleConfirm(a)}>{confirmed ? '確定済' : '確定'}</button>
                     )}</td>
                   </tr>
+                  {lastOfWeek && (
+                    <tr className="pt-subtotal">
+                      <td colSpan={4}>{fmtDate(wk).slice(0, 5)}〜の週 合計</td>
+                      <td className="pt-time">{asHm(weekMin)}</td><td />
+                    </tr>
+                  )}
+                  </Fragment>
                 )
               })}
             </tbody>
+            <tfoot>
+              <tr className="pt-total">
+                <td colSpan={4}>{m}月 合計（{days.filter((d) => d.clock_out).length}日）</td>
+                <td className="pt-time">{asHm(days.filter((d) => d.clock_out).reduce((sum, d) => sum + workedMinutes(d), 0))}</td><td />
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}
       {err && <div className="notice warn">{err}</div>}
     </div>
-  )
-}
-
-/* ---------- 稼働予定表⇄勤怠記録の切り替え表示 ---------- */
-function PlanKintai({ me }: { me: Member }) {
-  const [view, setView] = useState<'plan' | 'kintai'>('plan')
-  return (
-    <>
-      <div className="seg-row" role="tablist" aria-label="表の切り替え">
-        <button role="tab" aria-selected={view === 'plan'}
-          className={`preset-chip ${view === 'plan' ? 'sel' : ''}`}
-          onClick={() => setView('plan')}>稼働予定表</button>
-        <button role="tab" aria-selected={view === 'kintai'}
-          className={`preset-chip ${view === 'kintai' ? 'sel' : ''}`}
-          onClick={() => setView('kintai')}>勤怠記録</button>
-      </div>
-      {view === 'plan' ? <PlanRows me={me} /> : <KintaiTable me={me} />}
-    </>
-  )
-}
-
-/* ---------- 日報 ---------- */
-function Report({ me }: { me: Member }) {
-  const [body, setBody] = useState('')
-  const [history, setHistory] = useState<ReportRow[]>([])
-  const [saved, setSaved] = useState(false)
-  const [showReports, setShowReports] = useState(false) // 日報の記入・過去分はボタンで開く
-  const [err, setErr] = useState('')
-  const myhood = useMyhood(me.company_id)
-
-  const load = useCallback(async () => {
-    const { data: reports } = await supabase.from('daily_reports').select('*').eq('member_id', me.id)
-      .order('work_date', { ascending: false })
-    // 予定だけの未来行（body空）は日報の履歴には出さない
-    setHistory((reports ?? []).filter((r) => r.body))
-    const t = (reports ?? []).find((r) => r.work_date === today())
-    if (t) { setBody(t.body === '動画で提出' ? '' : t.body); setSaved(true) }
-  }, [me.id])
-
-  useEffect(() => { load() }, [load])
-
-  const todayRep = history.find((r) => r.work_date === today())
-
-  const submit = async (video?: string) => {
-    setErr('')
-    const { error } = await supabase.from('daily_reports').upsert(
-      { member_id: me.id, work_date: today(), body: body || '動画で提出', ...(video ? { video } : {}) },
-      { onConflict: 'member_id,work_date' },
-    )
-    if (error) return setErr(`提出できませんでした（${error.message}）`)
-    setSaved(true)
-    load()
-  }
-
-  // 動画を撮る（選ぶ）とアップロードして日報を提出扱いに
-  // ponytail: MyHoodのAPIが使えるようになったら、ここからMyHoodにも同時投稿する
-  const submitVideo = async (file: File | undefined) => {
-    if (!file) return
-    try {
-      submit(await uploadVideo(me.id, file))
-    } catch (e) {
-      setErr(`動画をアップロードできませんでした（${(e as Error).message}）`)
-    }
-  }
-
-  return (
-    <>
-      <PlanKintai me={me} />
-      {!showReports && (
-        <button className="btn-outline" style={{ margin: '0 auto', display: 'block' }}
-          onClick={() => setShowReports(true)}>日報を書く・過去の日報を見る</button>
-      )}
-      {showReports && (<>
-      <div className="card">
-        <h2>今日の日報 <span className="tag">{today().slice(5).replace('-', '/')}</span></h2>
-        <label>業務内容（実績）</label>
-        <textarea placeholder="今日行った業務を入力" value={body}
-          onChange={(e) => { setBody(e.target.value); setSaved(false) }} />
-        {err && <div className="notice warn">{err}</div>}
-        <div className="form-actions">
-          <button className="btn-primary" style={{ margin: 0 }} disabled={!body || saved} onClick={() => submit()}>
-            {saved ? '提出済み ✓' : '日報を提出'}
-          </button>
-          {myhood && (
-            <label className="btn-outline" style={{ cursor: 'pointer' }}>
-              🎥 MyHood
-              <input type="file" accept="video/*" capture hidden
-                onChange={(e) => submitVideo(e.target.files?.[0])} />
-            </label>
-          )}
-        </div>
-        {playable(todayRep?.video ?? null) && (
-          <video className="report-video" src={todayRep!.video!} controls playsInline />
-        )}
-        {myhood && <div className="notice">動画を撮って（選んで）アップロードすると、それだけで提出扱いになります</div>}
-      </div>
-
-      <div className="card">
-        <h2>過去の日報</h2>
-        {history.length === 0 ? <div className="empty">まだ日報がありません</div> : (
-          <div className="list">
-            {history.map((r) => (
-              <div key={r.id} className="list-item">
-                <div className="when">{r.work_date.slice(5).replace('-', '/')}</div>
-                <div className="title">{r.body}</div>
-                {playable(r.video) && <video className="report-video" src={r.video} controls playsInline />}
-                <span className="badge badge-blue">{r.video ? '動画提出' : '提出済'}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      </>)}
-    </>
-  )
-}
-
-/* ---------- スケジュール ---------- */
-const TL_START = 8 * 60
-const TL_END = 20 * 60
-// ponytail: 固定プリセット。会社ごとに編集したくなったら companies にカラム追加
-const TITLE_PRESETS = ['定例MTG', '開発', '1on1']
-
-function Schedule({ me }: { me: Member }) {
-  const base = new Date()
-  const year = base.getFullYear()
-  const month = base.getMonth() // 0-indexed
-  const [events, setEvents] = useState<ScheduleRow[]>([])
-  // 自分の目標・ネクストアクションの期日をカレンダーに重ねて表示する
-  const [dueGoals, setDueGoals] = useState<Goal[]>([])
-  const [dueActions, setDueActions] = useState<NextAction[]>([])
-  const [selDay, setSelDay] = useState(base.getDate())
-  const [draft, setDraft] = useState<{ start: string; end: string } | null>(null)
-  const [title, setTitle] = useState('')
-  const [meet, setMeet] = useState(true)
-  const [dragFrom, setDragFrom] = useState<number | null>(null)
-  const [err, setErr] = useState('')
-  // 提案フロー: 宛先・受け取った提案のインライン修正
-  const [proposeTo, setProposeTo] = useState('')
-  const [colleagues, setColleagues] = useState<Member[]>([])
-  const [editProp, setEditProp] = useState<ScheduleRow | null>(null)
-  const [pStart, setPStart] = useState('')
-  const [pEnd, setPEnd] = useState('')
-
-  const load = useCallback(async () => {
-    const from = new Date(year, month, 1).toISOString()
-    const to = new Date(year, month + 1, 1).toISOString()
-    const dFrom = `${year}-${String(month + 1).padStart(2, '0')}-01`
-    const dTo = new Date(year, month + 1, 1).toLocaleDateString('sv-SE')
-    const [{ data }, { data: gs }, { data: nas }] = await Promise.all([
-      supabase.from('schedules').select('*')
-        .gte('starts_at', from).lt('starts_at', to).order('starts_at'),
-      supabase.from('goals').select('*')
-        .eq('member_id', me.id).gte('due_date', dFrom).lt('due_date', dTo).order('due_date'),
-      supabase.from('next_actions').select('*')
-        .eq('member_id', me.id).gte('due_date', dFrom).lt('due_date', dTo).order('due_date'),
-    ])
-    // 却下された提案は表示しない
-    setEvents((data ?? []).filter((e: ScheduleRow) => e.status !== 'declined'))
-    setDueGoals(((gs as Goal[] | null) ?? []).filter((g) => g.status !== 'dropped'))
-    setDueActions(((nas as NextAction[] | null) ?? []))
-  }, [year, month, me.id])
-
-  useEffect(() => { load() }, [load])
-
-  useEffect(() => {
-    supabase.from('members').select('*')
-      .eq('company_id', me.company_id).eq('status', 'active')
-      .then(({ data }) => setColleagues((data as Member[]) ?? []))
-  }, [me.company_id])
-
-  const firstWeekday = new Date(year, month, 1).getDay()
-  const daysInMonth = new Date(year, month + 1, 0).getDate()
-  const cells: (number | null)[] = [
-    ...Array(firstWeekday).fill(null),
-    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
-  ]
-
-  const evDay = (e: ScheduleRow) => new Date(e.starts_at).getDate()
-  const evStart = (e: ScheduleRow) =>
-    new Date(e.starts_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
-  const evEnd = (e: ScheduleRow) =>
-    new Date(e.ends_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
-  const isMine = (e: ScheduleRow) => e.member_id === me.id
-
-  const dayEvents = events.filter((e) => evDay(e) === selDay)
-  const otherEvents = dayEvents.filter((e) => !isMine(e))
-  const dueDay = (d: string) => Number(d.slice(8, 10))
-  const dayDueGoals = dueGoals.filter((g) => dueDay(g.due_date) === selDay)
-  const dayDueActions = dueActions.filter((a) => a.due_date && dueDay(a.due_date) === selDay)
-  const hasDue = (d: number) =>
-    dueGoals.some((g) => dueDay(g.due_date) === d) ||
-    dueActions.some((a) => a.due_date && dueDay(a.due_date) === d)
-
-  const conflict =
-    draft &&
-    otherEvents.some((e) =>
-      toMin(draft.start) < toMin(evEnd(e)) && toMin(evStart(e)) < toMin(draft.end))
-
-  // タイムライン上の座標 → 30分スナップの分
-  const posToMin = (ev: React.PointerEvent<HTMLDivElement>) => {
-    const rect = ev.currentTarget.getBoundingClientRect()
-    const ratio = (ev.clientY - rect.top) / rect.height
-    return Math.max(TL_START, Math.min(TL_END,
-      Math.round((TL_START + ratio * (TL_END - TL_START)) / 30) * 30))
-  }
-  const fmtMin = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
-
-  // 上から下へドラッグ → その範囲で予定下書き（クリックだけなら1時間）
-  const dragStart = (ev: React.PointerEvent<HTMLDivElement>) => {
-    const m = posToMin(ev)
-    setDragFrom(m)
-    setDraft({ start: fmtMin(m), end: fmtMin(Math.min(m + 60, TL_END)) })
-  }
-  const dragMove = (ev: React.PointerEvent<HTMLDivElement>) => {
-    if (dragFrom === null) return
-    const m = posToMin(ev)
-    if (m > dragFrom) setDraft({ start: fmtMin(dragFrom), end: fmtMin(m) })
-  }
-  const dragEnd = () => setDragFrom(null)
-
-  const add = async () => {
-    if (!draft) return
-    const mk = (t: string) => new Date(year, month, selDay, ...t.split(':').map(Number) as [number, number]).toISOString()
-    setErr('')
-    const { data: created, error } = await supabase.from('schedules').insert({
-      company_id: me.company_id, member_id: me.id, title,
-      starts_at: mk(draft.start), ends_at: mk(draft.end), with_meet: meet,
-      ...(proposeTo ? { status: 'proposed', proposed_by: me.id, to_member_id: proposeTo } : {}),
-    }).select('id').single()
-    if (error) return setErr(`予定を保存できませんでした（${error.message}）`)
-    if (!proposeTo && created) gcalSync(created.id) // 提案は承認された時点で同期する
-
-    setDraft(null); setTitle(''); setMeet(true); setProposeTo('')
-    load()
-  }
-
-  /* 提案への応答。承認・修正・却下できるのは宛先（to_member_id）本人だけ */
-  const nameOf = (id: string | null) => colleagues.find((m) => m.id === id)?.name ?? '—'
-  const evDate = (e: ScheduleRow) =>
-    new Date(e.starts_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })
-  const incoming = events.filter((e) => e.status === 'proposed' && e.to_member_id === me.id)
-  const outgoing = events.filter((e) => e.status === 'proposed' && e.proposed_by === me.id)
-
-  const respond = async (e: ScheduleRow, patch: Partial<ScheduleRow>) => {
-    setErr('')
-    const { error } = await supabase.from('schedules').update(patch).eq('id', e.id)
-    if (error) return setErr(`更新できませんでした（${error.message}）`)
-    if (patch.status === 'confirmed') gcalSync(e.id)
-    if (patch.status === 'declined') gcalSync(e.id, 'delete')
-    setEditProp(null)
-    load()
-  }
-  // 時刻を変えて提案し返す: proposed_by / to_member_id をスワップしてボールを相手に渡す
-  const counter = (e: ScheduleRow) => {
-    const mkOn = (t: string) => {
-      const d = new Date(e.starts_at)
-      const [h, m] = t.split(':').map(Number)
-      d.setHours(h, m, 0, 0)
-      return d.toISOString()
-    }
-    respond(e, {
-      starts_at: mkOn(pStart), ends_at: mkOn(pEnd),
-      proposed_by: me.id, to_member_id: e.proposed_by, status: 'proposed',
-    })
-  }
-
-  const block = (s: string, e: string) => ({
-    top: `${((toMin(s) - TL_START) / (TL_END - TL_START)) * 100}%`,
-    height: `${((toMin(e) - toMin(s)) / (TL_END - TL_START)) * 100}%`,
-  })
-
-  return (
-    <>
-      <div className="card">
-        <h2>{year}年{month + 1}月 <span className="tag">Googleカレンダー連携</span></h2>
-        <div className="cal-grid">
-          {['日', '月', '火', '水', '木', '金', '土'].map((w) => (
-            <div key={w} className="cal-wday">{w}</div>
-          ))}
-          {cells.map((d, i) =>
-            d === null ? <div key={i} /> : (
-              <button key={i}
-                className={`cal-day ${d === selDay ? 'sel' : ''} ${d === base.getDate() ? 'today' : ''}`}
-                onClick={() => { setSelDay(d); setDraft(null) }}>
-                {d}
-                <span className="cal-dots">
-                  {events.filter((e) => evDay(e) === d).slice(0, 3).map((e, j) => (
-                    <i key={j} className={isMine(e) ? 'dot-me' : 'dot-boss'} />
-                  ))}
-                  {hasDue(d) && <i className="dot-task" />}
-                </span>
-              </button>
-            )
-          )}
-        </div>
-      </div>
-
-      <div className="card">
-        <h2>{month + 1}月{selDay}日 <span className="tag">空き時間をタップで予定作成</span></h2>
-        <div className="tl-legend">
-          <span><i className="dot-me" /> 自分</span>
-          <span><i className="dot-boss" /> 他のメンバー・全社</span>
-          <span><i className="dot-task" /> 目標・やることの期日</span>
-        </div>
-        {(dayDueGoals.length > 0 || dayDueActions.length > 0) && (
-          <div className="due-list">
-            {dayDueGoals.map((g) => (
-              <div key={g.id} className="due-row">
-                <span className="badge badge-yellow">目標の期日</span>
-                <span className="due-title">{g.title}</span>
-                {g.status === 'done' && <span className="badge badge-blue">達成</span>}
-              </div>
-            ))}
-            {dayDueActions.map((a) => (
-              <div key={a.id} className="due-row">
-                <span className="badge badge-gray">やること</span>
-                <span className="due-title">{a.title}</span>
-                {a.status === 'done' && <span className="badge badge-blue">完了</span>}
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="timeline"
-          onPointerDown={dragStart} onPointerMove={dragMove}
-          onPointerUp={dragEnd} onPointerLeave={dragEnd}>
-          {Array.from({ length: (TL_END - TL_START) / 60 }, (_, i) => (
-            <div key={i} className="tl-hour" style={{ top: `${(i / ((TL_END - TL_START) / 60)) * 100}%` }}>
-              {String(8 + i).padStart(2, '0')}:00
-            </div>
-          ))}
-          {dayEvents.map((e) => (
-            <div key={e.id}
-              className={`tl-block ${isMine(e) ? 'me' : 'boss'} ${e.status === 'proposed' ? 'proposed' : ''}`}
-              style={block(evStart(e), evEnd(e))} onPointerDown={(ev) => ev.stopPropagation()}>
-              <b>{e.title}</b> {evStart(e)}–{evEnd(e)}
-              {e.with_meet && (e.meet_url
-                ? <> · <a href={e.meet_url} target="_blank" rel="noreferrer">Meet</a></>
-                : ' · Meet')}
-              {e.status === 'proposed' && '（提案中）'}
-            </div>
-          ))}
-          {draft && (
-            <div className={`tl-block draft ${conflict ? 'conflict' : ''}`}
-              style={block(draft.start, draft.end)}>
-              <b>{title || '新しい予定'}</b> {draft.start}–{draft.end}
-            </div>
-          )}
-        </div>
-
-        {draft && (
-          <div className="draft-form">
-            {conflict && <div className="notice warn">⚠ 他のメンバーの予定と重なっています。別の時間帯を選んでください</div>}
-            <label>タイトル</label>
-            <div className="preset-row">
-              {TITLE_PRESETS.map((p) => (
-                <button key={p} className={`preset-chip ${title === p ? 'sel' : ''}`}
-                  onClick={() => setTitle(p)}>{p}</button>
-              ))}
-            </div>
-            <input type="text" placeholder="またはタイトルを入力" value={title}
-              onChange={(e) => setTitle(e.target.value)} />
-            <div className="draft-times">
-              <input type="time" aria-label="開始時刻" value={draft.start} onChange={(e) => setDraft({ ...draft, start: e.target.value })} />
-              <span>–</span>
-              <input type="time" aria-label="終了時刻" value={draft.end} onChange={(e) => setDraft({ ...draft, end: e.target.value })} />
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={meet} onChange={(e) => setMeet(e.target.checked)} style={{ width: 'auto' }} />
-              Google Meet のリンクを付ける
-            </label>
-            <label htmlFor="sc-to">この予定の扱い</label>
-            <select id="sc-to" value={proposeTo} onChange={(e) => setProposeTo(e.target.value)}>
-              <option value="">すぐ確定する</option>
-              {colleagues.filter((m) => m.id !== me.id).map((m) => (
-                <option key={m.id} value={m.id}>{m.name}さんに提案する（承認をもらう）</option>
-              ))}
-            </select>
-            {err && <div className="notice warn">{err}</div>}
-            <button className="btn-primary" disabled={!title || !!conflict} onClick={add}>
-              {proposeTo ? `${nameOf(proposeTo)}さんに提案を送る` : '追加してカレンダーに同期'}
-            </button>
-          </div>
-        )}
-        {!draft && <div className="notice">タイムラインの空き時間をタップすると、そこに予定を作成できます</div>}
-      </div>
-
-      {incoming.length > 0 && (
-        <div className="card">
-          <h2>あなたへの提案 <span className="tag">{incoming.length}件</span></h2>
-          {incoming.map((e) => (
-            <div key={e.id} className="proposal">
-              <div className="proposal-title">
-                <b>{e.title}</b> {evDate(e)} {evStart(e)}–{evEnd(e)}
-                {e.with_meet && ' · Meet'} — {nameOf(e.proposed_by)}さんから
-              </div>
-              {editProp?.id === e.id ? (
-                <div className="draft-times" style={{ flexWrap: 'wrap' }}>
-                  <input type="time" aria-label="開始時刻" value={pStart} onChange={(ev) => setPStart(ev.target.value)} />
-                  <span>–</span>
-                  <input type="time" aria-label="終了時刻" value={pEnd} onChange={(ev) => setPEnd(ev.target.value)} />
-                  <button className="btn-primary" style={{ margin: 0 }}
-                    disabled={!pStart || !pEnd || pEnd <= pStart} onClick={() => counter(e)}>
-                    この時間で再提案
-                  </button>
-                  <button className="btn-outline" onClick={() => setEditProp(null)}>キャンセル</button>
-                </div>
-              ) : (
-                <div className="form-actions" style={{ marginTop: 8 }}>
-                  <button className="btn-primary" style={{ margin: 0 }}
-                    onClick={() => respond(e, { status: 'confirmed' })}>承認</button>
-                  <button className="btn-outline"
-                    onClick={() => { setEditProp(e); setPStart(isoHm(e.starts_at)); setPEnd(isoHm(e.ends_at)) }}>
-                    時間を修正して再提案
-                  </button>
-                  <button className="btn-outline" onClick={() => respond(e, { status: 'declined' })}>却下</button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {outgoing.length > 0 && (
-        <div className="card">
-          <h2>承認待ちの提案 <span className="tag">相手の返事待ち</span></h2>
-          <div className="list">
-            {outgoing.map((e) => (
-              <div key={e.id} className="list-item">
-                <div className="when">{evDate(e)} {evStart(e)}–{evEnd(e)}</div>
-                <div className="title">{e.title}</div>
-                <span className="badge badge-yellow">{nameOf(e.to_member_id)}さんの承認待ち</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </>
   )
 }
 
@@ -3209,8 +2760,8 @@ function AccountSettings({ me, onRename }: { me: Member; onRename: (name: string
             <div>
               <div className="link-title">Google アカウント</div>
               <div className="link-desc">
-                {googleLinked ? '連携済み。カレンダーとMeetに利用します'
-                  : googleOk ? '連携するとGoogleログインとカレンダー連携が使えます'
+                {googleLinked ? '連携済み。Googleでログインできます'
+                  : googleOk ? '連携するとGoogleでログインできます'
                   : 'Googleログインが未設定です。管理者にご確認ください'}
               </div>
             </div>
@@ -3303,7 +2854,7 @@ function GoalsCard({ member, me, names, canEvaluate }: {
 
   const add = async () => {
     setErr(''); setBusy(true)
-    const { data: created, error } = await supabase.from('goals').insert({
+    const { error } = await supabase.from('goals').insert({
       company_id: member.company_id, member_id: member.id,
       period_type: form.period, due_date: dueDate,
       title: form.title, body: form.body || null,
@@ -3312,7 +2863,6 @@ function GoalsCard({ member, me, names, canEvaluate }: {
     }).select('id').single()
     setBusy(false)
     if (error) return setErr(`目標を追加できませんでした（${error.message}）`)
-    if (created) dueSync('goal', (created as { id: string }).id)
     setForm(BLANK_GOAL)
     setOpen(false)
     load()
@@ -3321,7 +2871,6 @@ function GoalsCard({ member, me, names, canEvaluate }: {
   const removeGoal = async (g: Goal) => {
     setMenuFor(null)
     if (!confirm(`「${g.title}」を削除しますか？`)) return
-    await dueSync('goal', g.id, 'delete') // 行が消える前にカレンダー側のイベントを消す
     const { error } = await supabase.from('goals').delete().eq('id', g.id)
     if (error) return setErr('削除できませんでした')
     load()
@@ -3346,7 +2895,6 @@ function GoalsCard({ member, me, names, canEvaluate }: {
       .update({ title: editForm.title, body: editForm.body || null, period_type: editForm.period, due_date: due })
       .eq('id', g.id)
     if (error) return setErr(`保存できませんでした（${error.message}）`)
-    dueSync('goal', g.id)
     setEditFor(null)
     load()
   }
@@ -3579,13 +3127,10 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
       setTimeout(() => setLeaving((s) => { const n = new Set(s); n.delete(r.id); return n }), 900)
     }
     await save(r.id, p)
-    // 完了したらカレンダーから消し、戻したら再同期する
-    dueSync('next_action', r.id, status === 'done' ? 'delete' : 'upsert')
   }
   const changeDue = async (r: NextAction, due: string) => {
     const p = { due_date: due || null }
     patch(r.id, p); await save(r.id, p)
-    dueSync('next_action', r.id)
   }
   // 内容・メモは入力停止後に自動保存（モバイルではblurが起きないままタブ移動しがちなため）
   const patchText = (r: NextAction, field: 'title' | 'note', value: string) => {
@@ -3620,7 +3165,6 @@ function NextActionsCard({ member, me }: { member: Member; me: Member }) {
   }
 
   const remove = async (r: NextAction) => {
-    if (r.google_event_id) await dueSync('next_action', r.id, 'delete') // 行が消える前にイベントを消す
     const { error } = await supabase.from('next_actions').delete().eq('id', r.id)
     if (error) return setErr('削除できませんでした')
     load()
@@ -3814,8 +3358,8 @@ function FeedbackCard({ target, me, names }: { target: Member; me: Member; names
 }
 
 /* ---------- 他メンバーのプロフィール閲覧（目標＋フィードバック。管理者は評価も） ---------- */
-function MemberProfileView({ member, me, names, onBack }: {
-  member: Member; me: Member; names: Record<string, string>; onBack: () => void
+function MemberProfileView({ member, me, names, onBack, onOpenOffice }: {
+  member: Member; me: Member; names: Record<string, string>; onBack: () => void; onOpenOffice?: () => void
 }) {
   return (
     <>
@@ -3832,6 +3376,7 @@ function MemberProfileView({ member, me, names, onBack }: {
         </div>
         <div className="form-actions">
           <button className="btn-outline" onClick={onBack}>← 戻る</button>
+          {onOpenOffice && <button className="btn-primary" style={{ margin: 0 }} onClick={onOpenOffice}>勤怠・給与を見る（事務管理）</button>}
         </div>
       </div>
       <NextActionsCard member={member} me={me} />
@@ -3844,9 +3389,10 @@ function MemberProfileView({ member, me, names, onBack }: {
 /* ---------- プロフィールタブ（自分／管理者は組織管理と切り替え） ---------- */
 function ProfilePage({ me, onRename, onOpenMoney }: { me: Member; onRename: (name: string) => void; onOpenMoney?: () => void }) {
   const isAdmin = me.role === 'admin'
-  const [view, setView] = useState<'mine' | 'org'>('mine')
   const [members, setMembers] = useState<Member[]>([])
   const [viewing, setViewing] = useState<Member | null>(null)
+  const [orgOpen, setOrgOpen] = useState(false)
+  const [office, setOffice] = useState(false) // 管理者: メンバーの事務管理画面を開いている
 
   useEffect(() => {
     supabase.from('members').select('*').eq('company_id', me.company_id).order('created_at')
@@ -3856,48 +3402,267 @@ function ProfilePage({ me, onRename, onOpenMoney }: { me: Member; onRename: (nam
   const names = Object.fromEntries(members.map((m) => [m.id, m.name]))
   const colleagues = members.filter((m) => m.id !== me.id && m.status === 'active')
 
-  if (viewing) {
-    return <MemberProfileView member={viewing} me={me} names={names} onBack={() => setViewing(null)} />
+  if (viewing && office) {
+    return <MemberOffice member={viewing} backLabel={`${viewing.name}のプロフィール`} onBack={() => setOffice(false)} />
   }
+  if (viewing) {
+    return <div className="flat"><MemberProfileView member={viewing} me={me} names={names} onBack={() => { setViewing(null); setOffice(false) }}
+      onOpenOffice={isAdmin ? () => setOffice(true) : undefined} /></div>
+  }
+
+  // 上から: 自分 → 自分の目標・FB → メンバー（ピープル管理の入口） → 組織設定（管理者・折りたたみ）
+  return (
+    <div className="flat">
+      <Profile me={me} onRename={onRename} onOpenMoney={onOpenMoney} />
+      <GoalsCard member={me} me={me} names={names} />
+      <FeedbackCard target={me} me={me} names={names} />
+      {colleagues.length > 0 && (
+        <div className="card">
+          <h2>メンバー <span className="tag">{isAdmin ? '目標・ネクストアクション・評価' : '目標を見る・フィードバックを送る'}</span></h2>
+          <div className="member-icons">
+            {colleagues.map((m, i) => (
+              <button key={m.id} className="member-icon" onClick={() => setViewing(m)}>
+                <div className="m-avatar" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>{m.name[0]}</div>
+                <div className="name">{m.name}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {isAdmin && (
+        <>
+          <button className="btn-outline" style={{ width: '100%', marginBottom: 16 }} aria-expanded={orgOpen}
+            onClick={() => setOrgOpen(!orgOpen)}>組織設定（名簿・招待・時給・請求書） {orgOpen ? '▴' : '▾'}</button>
+          {orgOpen && <Members me={me} />}
+        </>
+      )}
+    </div>
+  )
+}
+
+/* ---------- カレンダータブ（稼働予定表＋ネクストアクション） ---------- */
+function CalendarTab({ me, member }: { me: Member; member: Member }) {
+  // ネクストアクション枠は任意（ToDoアプリを別で使う人もいるため）
+  // ponytail: 端末ごとの設定。複数端末で揃えたくなったら members にカラム追加
+  const key = `na-enabled:${me.id}`
+  const [na, setNa] = useState(() => { try { return localStorage.getItem(key) === '1' } catch { return false } })
+  const toggle = (on: boolean) => { setNa(on); try { localStorage.setItem(key, on ? '1' : '0') } catch { /* 保存できなくても表示は切り替える */ } }
+  return (
+    <>
+      {na ? (
+        <>
+          <NextActionsCard member={member} me={me} />
+          <button className="link-btn" onClick={() => toggle(false)}>ネクストアクション枠を外す</button>
+        </>
+      ) : (
+        <button className="btn-outline" onClick={() => toggle(true)}>＋ ネクストアクション枠を追加</button>
+      )}
+      <PlanRows me={member} />
+    </>
+  )
+}
+
+type MemberOfficeInfo = {
+  member_id: string; company_id: string
+  weekly_limit_hours: number | null; monthly_limit_hours: number | null; memo: string | null
+  bank_name: string | null; bank_branch: string | null; bank_account_type: string | null
+  bank_account_number: string | null; bank_account_holder: string | null
+}
+const BLANK_OFFICE = {
+  weekly_limit_hours: null, monthly_limit_hours: null, memo: null, bank_name: null, bank_branch: null,
+  bank_account_type: '普通', bank_account_number: null, bank_account_holder: null,
+}
+
+/* ---------- 事務管理: メンバー1人の月次（確定した勤怠×時給＋承認済み経費）＋タイムカード・カレンダー ---------- */
+function MemberOffice({ member, onBack, backLabel = 'ホーム' }: { member: Member; onBack: () => void; backLabel?: string }) {
+  const [month, setMonth] = useState(today().slice(0, 7))
+  const [atts, setAtts] = useState<Attendance[]>([])
+  const [confirmedDays, setConfirmedDays] = useState<Set<string>>(new Set())
+  const [exps, setExps] = useState<MoneyExpense[]>([])
+  const [inv, setInv] = useState<Invoice | null>(null)
+  const [invView, setInvView] = useState(false)
+  const [view, setView] = useState<'timecard' | 'calendar'>('timecard')
+  const [info, setInfo] = useState<MemberOfficeInfo | null>(null)
+  const [infoErr, setInfoErr] = useState('')
+  const [infoOpen, setInfoOpen] = useState(false)
+
+  const load = useCallback(async () => {
+    const { from, to } = monthRange(month)
+    const [{ data: a }, { data: r }, { data: e }, { data: i }] = await Promise.all([
+      supabase.from('attendances').select('*, breaks(*)').eq('member_id', member.id).gte('work_date', from).lt('work_date', to),
+      supabase.from('daily_reports').select('*').eq('member_id', member.id).gte('work_date', from).lt('work_date', to),
+      supabase.from('money_expenses').select('*').eq('member_id', member.id).eq('scope', 'company')
+        .gte('occurred_on', from).lt('occurred_on', to).order('occurred_on', { ascending: true }),
+      supabase.from('invoices').select('*').eq('member_id', member.id).eq('month', month).maybeSingle(),
+    ])
+    setAtts(((a as Attendance[]) ?? []).filter((x) => x.clock_in && x.clock_out))
+    setConfirmedDays(new Set(((r as ReportRow[]) ?? []).filter((x) => x.confirmed).map((x) => x.work_date)))
+    setExps((e as MoneyExpense[]) ?? [])
+    setInv((i as Invoice | null) ?? null)
+  }, [member.id, month])
+  useEffect(() => {
+    supabase.from('member_office').select('*').eq('member_id', member.id).maybeSingle()
+      .then(({ data, error }) => {
+        if (error) return setInfoErr('上限・メモ・振込先はデータベースの準備が済むと使えます')
+        setInfo((data as MemberOfficeInfo | null) ?? { ...BLANK_OFFICE, member_id: member.id, company_id: member.company_id })
+      })
+  }, [member.id, member.company_id])
+  const saveInfo = async (patch: Partial<MemberOfficeInfo>) => {
+    // 触っただけ（値が同じ）なら書き込まない
+    if (!info || Object.entries(patch).every(([k, v]) => info[k as keyof MemberOfficeInfo] === v)) return
+    const next = { ...info, ...patch }
+    setInfo(next)
+    const { error } = await supabase.from('member_office').upsert(next, { onConflict: 'member_id' })
+    setInfoErr(error ? `保存できませんでした（${error.message}）` : '')
+  }
+  // 今週（月曜始まり）の実働。月をまたいでも今週分は別に取る
+  const [weekMin, setWeekMin] = useState(0)
+  useEffect(() => {
+    supabase.from('attendances').select('*, breaks(*)').eq('member_id', member.id).gte('work_date', weekOf(today()))
+      .then(({ data }) => setWeekMin(((data as Attendance[]) ?? []).filter((a) => a.clock_out).reduce((sum, a) => sum + workedMinutes(a), 0)))
+  }, [member.id])
+  useEffect(() => { load() }, [load])
+
+  const setExpStatus = async (id: string, status: MoneyExpense['status']) => {
+    const { error } = await supabase.from('money_expenses').update({ status }).eq('id', id)
+    if (error) return alert(`更新できませんでした（${error.message}）`)
+    load()
+  }
+
+  if (invView && inv) return <InvoiceView inv={inv} memberName={member.name} onClose={() => setInvView(false)} />
+
+  const confirmed = atts.filter((a) => confirmedDays.has(a.work_date))
+  const unconfirmed = atts.length - confirmed.length
+  const minConfirmed = confirmed.reduce((sum, a) => sum + workedMinutes(a), 0)
+  const minAll = atts.reduce((sum, a) => sum + workedMinutes(a), 0)
+  const pay = Math.round(minConfirmed / 60 * member.hourly_rate)
+  const approved = exps.filter((e) => e.status === 'approved')
+  const pending = exps.filter((e) => e.status === 'submitted')
+  const expTotal = approved.reduce((sum, e) => sum + e.amount, 0)
+  const [y, m] = month.split('-').map(Number)
+  const moveMonth = (d: number) => setMonth(new Date(y, m - 1 + d, 1).toLocaleDateString('sv-SE').slice(0, 7))
 
   return (
     <>
-      {isAdmin && (
-        <div className="seg-row" role="tablist" aria-label="プロフィールの切り替え">
-          <button role="tab" aria-selected={view === 'mine'}
-            className={`preset-chip ${view === 'mine' ? 'sel' : ''}`}
-            onClick={() => setView('mine')}>自分</button>
-          <button role="tab" aria-selected={view === 'org'}
-            className={`preset-chip ${view === 'org' ? 'sel' : ''}`}
-            onClick={() => setView('org')}>組織管理</button>
+      <div className="office-head">
+        <button className="link-btn" onClick={onBack}>← {backLabel}</button>
+        <h2>{member.name}</h2>
+        <span className="month-nav">
+          <button aria-label="前の月" onClick={() => moveMonth(-1)}>◀</button>
+          <b>{y}年{m}月</b>
+          <button aria-label="次の月" onClick={() => moveMonth(1)}>▶</button>
+        </span>
+      </div>
+
+      <div className="home-stats">
+        <div><span>実働（確定分）</span><b>{hmm(minConfirmed)}</b>{unconfirmed > 0 && <small>全体 {hmm(minAll)}</small>}</div>
+        <div><span>給与{member.hourly_rate > 0 ? `（時給 ${yen(member.hourly_rate)}）` : ''}</span><b>{member.hourly_rate > 0 ? yen(pay) : '給与制'}</b></div>
+        <div><span>経費（承認済み）</span><b>{yen(expTotal)}</b></div>
+        <div className="total"><span>支払合計</span><b>{yen(pay + expTotal)}</b></div>
+      </div>
+
+      {(() => {
+        const overW = info?.weekly_limit_hours && weekMin > info.weekly_limit_hours * 60
+        const overM = info?.monthly_limit_hours && minAll > info.monthly_limit_hours * 60
+        return (info?.weekly_limit_hours || info?.monthly_limit_hours) ? (
+          <div className="limit-row">
+            {info.weekly_limit_hours ? <span className={overW ? 'over' : ''}>今週 {hmm(weekMin)} / 上限 {info.weekly_limit_hours}h</span> : null}
+            {info.monthly_limit_hours ? <span className={overM ? 'over' : ''}>今月 {hmm(minAll)} / 上限 {info.monthly_limit_hours}h</span> : null}
+          </div>
+        ) : null
+      })()}
+
+      {(unconfirmed > 0 || pending.length > 0) && (
+        <div className="list" style={{ marginBottom: 16 }}>
+          {unconfirmed > 0 && (
+            <div className="list-item"><span className="badge badge-yellow">未確定</span>
+              <div className="title">勤怠が確定されていない日が{unconfirmed}日あります（支払合計に含みません）</div></div>
+          )}
+          {pending.map((e) => (
+            <div key={e.id} className="list-item">
+              <span className="badge badge-yellow">経費未確認</span>
+              <div className="title">{e.occurred_on.slice(5).replace('-', '/')} {e.label} {yen(e.amount)}</div>
+              <button className="link-btn" onClick={() => setExpStatus(e.id, 'approved')}>承認</button>
+              <button className="link-btn" onClick={() => setExpStatus(e.id, 'rejected')}>差し戻し</button>
+            </div>
+          ))}
         </div>
       )}
-      {isAdmin && view === 'org' ? (
-        <Members me={me} onOpenProfile={setViewing} />
-      ) : (
-        <>
-          <Profile me={me} onRename={onRename} onOpenMoney={onOpenMoney} />
-          <NextActionsCard member={me} me={me} />
-          <GoalsCard member={me} me={me} names={names} />
-          <FeedbackCard target={me} me={me} names={names} />
-          {colleagues.length > 0 && (
-            <div className="card">
-              <h2>メンバー <span className="tag">目標を見る・フィードバックを送る</span></h2>
-              <div className="list">
-                {colleagues.map((m, i) => (
-                  <div key={m.id} className="list-item">
-                    <div className="m-avatar member-av" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
-                      {m.name[0]}
-                    </div>
-                    <div className="title">{m.name}</div>
-                    <button className="btn-outline" onClick={() => setViewing(m)}>プロフィール</button>
-                  </div>
-                ))}
+
+      <div className="form-actions" style={{ marginBottom: 20 }}>
+        <button className="btn-outline" onClick={() => exportKintaiCsv([member], month)}>出勤簿CSV</button>
+        {inv && <button className="btn-outline" onClick={() => setInvView(true)}>請求書（{inv.status === 'paid' ? '支払済み' : '支払待ち'}）</button>}
+      </div>
+
+      <button className="btn-outline" style={{ width: '100%', marginBottom: 12 }} aria-expanded={infoOpen}
+        onClick={() => setInfoOpen(!infoOpen)}>働く上限・支払メモ・振込先 {infoOpen ? '▴' : '▾'}</button>
+      {infoOpen && (
+        <div className="office-info">
+          {infoErr && <div className="notice warn">{infoErr}</div>}
+          {info && (
+            <>
+              <h3>働く上限</h3>
+              <div className="grid2">
+                <label>週の上限（時間）<input type="number" min={0} defaultValue={info.weekly_limit_hours ?? ''}
+                  onBlur={(e) => saveInfo({ weekly_limit_hours: e.target.value ? Number(e.target.value) : null })} /></label>
+                <label>月の上限（時間）<input type="number" min={0} defaultValue={info.monthly_limit_hours ?? ''}
+                  onBlur={(e) => saveInfo({ monthly_limit_hours: e.target.value ? Number(e.target.value) : null })} /></label>
               </div>
-            </div>
+              <h3>振込先</h3>
+              <div className="grid2">
+                <label>銀行名<input defaultValue={info.bank_name ?? ''} placeholder="○○銀行"
+                  onBlur={(e) => saveInfo({ bank_name: e.target.value || null })} /></label>
+                <label>支店名<input defaultValue={info.bank_branch ?? ''} placeholder="○○支店"
+                  onBlur={(e) => saveInfo({ bank_branch: e.target.value || null })} /></label>
+                <label>種別<select defaultValue={info.bank_account_type ?? '普通'}
+                  onChange={(e) => saveInfo({ bank_account_type: e.target.value })}>
+                  <option>普通</option><option>当座</option></select></label>
+                <label>口座番号<input inputMode="numeric" defaultValue={info.bank_account_number ?? ''}
+                  onBlur={(e) => saveInfo({ bank_account_number: e.target.value || null })} /></label>
+                <label>口座名義（カナ）<input defaultValue={info.bank_account_holder ?? ''}
+                  onBlur={(e) => saveInfo({ bank_account_holder: e.target.value || null })} /></label>
+              </div>
+              <h3>支払いメモ</h3>
+              <label><textarea defaultValue={info.memo ?? ''} placeholder="例: 月末締め翌月25日払い、交通費は上限1万円"
+                onBlur={(e) => saveInfo({ memo: e.target.value || null })} /></label>
+              <div className="notice">管理者と本人だけが見られます</div>
+            </>
           )}
-        </>
+        </div>
       )}
+
+      <div className="seg-row" role="tablist" aria-label="表の切り替え">
+        <button role="tab" aria-selected={view === 'timecard'} className={`preset-chip ${view === 'timecard' ? 'sel' : ''}`}
+          onClick={() => setView('timecard')}>タイムカード</button>
+        <button role="tab" aria-selected={view === 'calendar'} className={`preset-chip ${view === 'calendar' ? 'sel' : ''}`}
+          onClick={() => setView('calendar')}>カレンダー</button>
+      </div>
+      {view === 'timecard' ? <KintaiTable me={member} /> : <PlanRows me={member} />}
+    </>
+  )
+}
+
+/* ---------- 管理者はカレンダー／タイムカードの上でメンバーを切り替えて見る ---------- */
+function MemberSwitch({ me, children }: { me: Member; children: (m: Member) => React.ReactNode }) {
+  const [members, setMembers] = useState<Member[]>([])
+  const [id, setId] = useState(me.id)
+  useEffect(() => {
+    if (me.role !== 'admin') return
+    supabase.from('members').select('*').eq('company_id', me.company_id).eq('status', 'active').order('created_at')
+      .then(({ data }) => setMembers((data as Member[] | null) ?? []))
+  }, [me.company_id, me.role])
+  const member = members.find((m) => m.id === id) ?? me
+  return (
+    <>
+      {me.role === 'admin' && members.length > 1 && (
+        <label className="member-switch">
+          表示中のメンバー
+          <select value={member.id} onChange={(e) => setId(e.target.value)}>
+            {members.map((m) => <option key={m.id} value={m.id}>{m.id === me.id ? `${m.name}（自分）` : m.name}</option>)}
+          </select>
+        </label>
+      )}
+      <Fragment key={member.id}>{children(member)}</Fragment>
     </>
   )
 }
@@ -3909,12 +3674,12 @@ const ICONS: Record<Tab, React.ReactNode> = {
       <path d="M3 10.5 12 3l9 7.5" /><path d="M5 9.5V21h14V9.5" />
     </svg>
   ),
-  report: (
+  timecard: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M6 2h9l5 5v15H6z" /><path d="M14 2v6h6" /><path d="M9 13h6M9 17h6" />
+      <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
     </svg>
   ),
-  schedule: (
+  calendar: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="5" width="18" height="17" rx="2" /><path d="M3 10h18M8 2v5M16 2v5" />
     </svg>
@@ -3929,14 +3694,15 @@ const ICONS: Record<Tab, React.ReactNode> = {
 // 4つ目は全員プロフィール（管理者はプロフィール内の上タブで組織管理＝旧名簿へ）
 const tabsFor = (_role: Member['role']): { key: Tab; label: string }[] => [
   { key: 'home', label: 'ホーム' },
-  { key: 'report', label: '稼働表' },
-  { key: 'schedule', label: 'カレンダー' },
+  { key: 'calendar', label: 'カレンダー' },
+  { key: 'timecard', label: 'タイムカード' },
   { key: 'profile', label: 'プロフィール' },
 ]
 
 /* ---------- デモ（/demo・データはインメモリ） ---------- */
 function DemoApp() {
   const [tab, setTab] = useState<Tab>('home')
+  const [office, setOffice] = useState<Member | null>(null) // ホームのメンバーアイコンから開いた事務画面
   const switchable = DEMO_MEMBERS.filter((m) => m.status === 'active')
   const [me, setMe] = useState(switchable[0])
   const [open, setOpen] = useState(false)
@@ -3969,13 +3735,13 @@ function DemoApp() {
         </button>
       </header>
       {/* keyで切り替え時に各画面を作り直し、前のユーザーのデータを残さない */}
-      {tab === 'home' && <Home key={me.id} me={me} />}
-      {tab === 'report' && <Report key={me.id} me={me} />}
-      {tab === 'schedule' && <Schedule key={me.id} me={me} />}
+      {tab === 'home' && (office ? <MemberOffice key={office.id} member={office} onBack={() => setOffice(null)} /> : <Home key={me.id} me={me} onOpenMember={setOffice} />)}
+      {tab === 'calendar' && <MemberSwitch key={me.id} me={me}>{(m) => <CalendarTab me={me} member={m} />}</MemberSwitch>}
+      {tab === 'timecard' && <MemberSwitch key={me.id} me={me}>{(m) => <KintaiTable me={m} />}</MemberSwitch>}
       {tab === 'profile' && <ProfilePage key={me.id} me={me} onRename={(name) => setMe({ ...me, name })} />}
       <nav className="tabbar">
         {tabsFor(me.role).map((t) => (
-          <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => setTab(t.key)}>
+          <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => { setOffice(null); setTab(t.key) }}>
             <span className="icon">{ICONS[t.key]}</span>{t.label}
           </button>
         ))}
@@ -3986,6 +3752,7 @@ function DemoApp() {
 
 function App() {
   const [tab, setTab] = useState<Tab>('home')
+  const [office, setOffice] = useState<Member | null>(null) // ホームのメンバーアイコンから開いた事務画面
   const [session, setSession] = useState<Session | null>(null)
   const [me, setMe] = useState<Member | null>(null)
   const [company, setCompany] = useState<{ id: string; name: string; icon: string } | null>(null)
@@ -4030,12 +3797,6 @@ function App() {
     })
     const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
       if (event === 'PASSWORD_RECOVERY') setRecovering(true)
-      // OAuth直後にしか渡ってこないrefresh_tokenを保存（カレンダー同期用）
-      if (s?.provider_refresh_token) {
-        supabase.from('google_tokens')
-          .upsert({ user_id: s.user.id, refresh_token: s.provider_refresh_token, updated_at: new Date().toISOString() })
-          .then(() => {})
-      }
       setSession(s)
       loadMe(s)
     })
@@ -4086,16 +3847,16 @@ function App() {
         : !me ? <Onboarding email={session.user.email ?? ''} onDone={() => loadMe(session)} />
         : (
           <>
-            {tab === 'home' && <Home me={me} />}
-            {tab === 'report' && <Report me={me} />}
-            {tab === 'schedule' && <Schedule me={me} />}
+            {tab === 'home' && (office ? <MemberOffice key={office.id} member={office} onBack={() => setOffice(null)} /> : <Home key={me.id} me={me} onOpenMember={setOffice} />)}
+            {tab === 'calendar' && <MemberSwitch me={me}>{(m) => <CalendarTab me={me} member={m} />}</MemberSwitch>}
+            {tab === 'timecard' && <MemberSwitch me={me}>{(m) => <KintaiTable me={m} />}</MemberSwitch>}
             {tab === 'profile' && (
               <ProfilePage me={me} onRename={(name) => setMe({ ...me, name })}
                 onOpenMoney={() => setMoneyMode(true)} />
             )}
             <nav className="tabbar">
               {tabsFor(me.role).map((t) => (
-                <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => setTab(t.key)}>
+                <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => { setOffice(null); setTab(t.key) }}>
                   <span className="icon">{ICONS[t.key]}</span>{t.label}
                 </button>
               ))}
