@@ -115,6 +115,14 @@ export type Goal = {
   created_at: string
 }
 
+export type Announcement = {
+  id: string
+  company_id: string
+  author_member_id: string
+  body: string
+  created_at: string
+}
+
 export type NextAction = {
   id: string
   company_id: string
