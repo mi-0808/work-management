@@ -32,7 +32,7 @@ const workedMinutes = (a: Attendance, now = Date.now()) => {
   if (!a.clock_in) return 0
   const end = a.clock_out ? new Date(a.clock_out).getTime() : now
   const gross = (end - new Date(a.clock_in).getTime()) / 60000
-  return Math.max(0, gross - breakMinutes(a.breaks, now))
+  return Math.max(0, gross - breakMinutes(a.breaks, end)) // 閉じていない中抜けは退勤時刻まで
 }
 
 const asHm = (min: number) => `${Math.floor(min / 60)}時間${String(Math.round(min % 60)).padStart(2, '0')}分`
@@ -379,10 +379,13 @@ function Home({ me, onOpenMember }: { me: Member; onOpenMember: (m: Member) => v
         .order('work_date', { ascending: false }).limit(7),
     ])
     // 前日以前の退勤し忘れは、その日の24:00で自動退勤にする（auto_outで「自動補完」表示）
+    // 中抜けしたまま戻らなかった日は、中抜け開始時刻を退勤とみなす（その中抜けは消す）
     const stale = (data ?? []).find((a) => a.work_date < today() && a.clock_in && !a.clock_out)
     if (stale) {
+      const open = (stale.breaks as Break[] | undefined)?.find((b) => !b.ended_at)
+      if (open) await supabase.from('breaks').delete().eq('id', open.id)
       await supabase.from('attendances').update({
-        clock_out: new Date(stale.work_date + 'T23:59:59').toISOString(), auto_out: true,
+        clock_out: open?.started_at ?? new Date(stale.work_date + 'T23:59:59').toISOString(), auto_out: true,
       }).eq('id', stale.id)
       return load()
     }
@@ -487,8 +490,16 @@ function Home({ me, onOpenMember }: { me: Member; onOpenMember: (m: Member) => v
     load()
   }
 
-  // 退勤後にまた稼働する場合。退勤時刻を消して勤務中に戻す
-  const resume = () => save({ clock_out: null })
+  // 退勤後にまた稼働する場合。退勤〜再開を中抜けとして記録し、退勤時刻を消して勤務中に戻す
+  const resume = async () => {
+    if (!att?.clock_out) return
+    setErr('')
+    const { error } = await supabase.from('breaks').insert({
+      attendance_id: att.id, started_at: att.clock_out, ended_at: new Date().toISOString(),
+    })
+    if (error) return setErr(`勤務を再開できませんでした（${error.message}）`)
+    save({ clock_out: null })
+  }
 
   // 中抜け（ランチ・私用など）。1日に何回でも
   const startBreak = async () => {
