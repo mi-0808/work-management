@@ -1,0 +1,83 @@
+/* デザイントークン（規定: docs/デザイン規定.md）
+   色は MyHoodβ と同じ（MyhoodBeta/src/styles/theme.css の --md-sys-color-*。2026-09-30 決定の「白×青」M3 方式）。
+   名前も MyHood と同じなので、MyHood 側を変えたら値を写すだけで揃う。
+   light-dark(ライト, ダーク) で両モードを1行に持つ。どちらが効くかは要素の color-scheme で決まる
+   （.ui-root が light dark を宣言。既存画面は未宣言なのでライトのまま）。
+   ここ以外に色を書かない。値を変えたら npm run check:contrast */
+:root {
+  /* --- 色: M3 カラーロール（15色）。色みを持つのは primary（青）と error（赤）だけ --- */
+  --md-sys-color-primary:                light-dark(#0063e6, #99c5ff);
+  --md-sys-color-on-primary:             light-dark(#ffffff, #002657);
+  --md-sys-color-primary-container:      light-dark(#e0eeff, #004299);
+  --md-sys-color-on-primary-container:   light-dark(#002c66, #d6e8ff);
+  --md-sys-color-surface:                light-dark(#ffffff, #121212);
+  --md-sys-color-surface-container:      light-dark(#f5f5f5, #1e1e1e);
+  --md-sys-color-surface-container-high: light-dark(#efefef, #282828);
+  --md-sys-color-on-surface:             light-dark(#171717, #e6e6e6);
+  --md-sys-color-on-surface-variant:     light-dark(#525252, #b0b0b0);
+  --md-sys-color-outline:                light-dark(#8a8a8a, #8c8c8c);
+  --md-sys-color-outline-variant:        light-dark(#e5e5e5, #3a3a3a);
+  --md-sys-color-error:                  light-dark(#ba1a1a, #ffb4ab);
+  --md-sys-color-on-error:               light-dark(#ffffff, #690005);
+  --md-sys-color-error-container:        light-dark(#ffdad6, #93000a);
+  --md-sys-color-on-error-container:     light-dark(#410002, #ffdad6);
+
+  /* 押す・なぞる・フォーカスは新しい色を作らず、上に色をこの割合で重ねる */
+  --md-sys-state-hover-state-layer-opacity: 0.08;
+  --md-sys-state-focus-state-layer-opacity: 0.1;
+  --md-sys-state-pressed-state-layer-opacity: 0.1;
+
+  /* メンバーのアイコン（頭文字）: MyHood の洋パレットの淡い面＋文字（ユーザーと同じ割り当て）。
+     「中身の色」なので primary/error だけのルールの例外 */
+  --yo-1-container: light-dark(#d0e5fb, #1e438f); --on-yo-1-container: light-dark(#0044ab, #e2e7ff);
+  --yo-2-container: light-dark(#cdfbe0, #005232); --on-yo-2-container: light-dark(#005735, #c2f4d3);
+  --yo-3-container: light-dark(#fef1c3, #5d4200); --on-yo-3-container: light-dark(#634600, #ffe5b9);
+  --yo-4-container: light-dark(#fde6dd, #7d2c1e); --on-yo-4-container: light-dark(#951807, #ffe2dc);
+  --yo-5-container: light-dark(#e4cffd, #563586); --on-yo-5-container: light-dark(#602fa1, #f1e3ff);
+  --yo-6-container: light-dark(#d7e3fa, #384667); --on-yo-6-container: light-dark(#2a4a87, #e1e8ff);
+
+  /* 下部タブのガラス（iOS 26 Liquid Glass 参照。MyHood と同じ） */
+  --glass-tabbar-bg:            light-dark(rgba(242, 242, 242, 0.9), rgba(18, 18, 18, 0.72));
+  --glass-tabbar-border:        light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.2));
+  --glass-tabbar-active-bg:     light-dark(#ffffff, rgba(255, 255, 255, 0.12));
+  --glass-tabbar-active-shadow: 0 1px 3px light-dark(rgba(0, 0, 0, 0.12), transparent),
+                                0 4px 10px light-dark(rgba(0, 0, 0, 0.08), transparent);
+  --glass-tabbar-shadow:        0 8px 24px light-dark(rgba(0, 0, 0, 0.10), rgba(0, 0, 0, 0.35));
+
+  /* --- 文字・余白・形は MyHood と同じ寸法 ---
+     MyHood は Tailwind で 1rem = 17px。名前は MyHood のクラス名（text-sm / p-4 / rounded-2xl）と1対1、
+     値はその実寸を px にしたもの。MyHood の画面を見て「text-sm」なら var(--text-sm) */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --text-2xl: 26px;   /* ページの大見出し */
+  --text-xl: 21px;    /* 見出し（大） */
+  --text-lg: 19px;    /* 見出し（小）・カードの見出し */
+  --text-base: 18px;  /* 本文・ボタン。読む文章は 16px 未満にしない */
+  --text-sm: 17px;    /* ラベル・補助・メタ情報 */
+  --text-xs: 14px;    /* バッジ・時刻など単独で意味が完結しないものだけ */
+  --text-2xs: 12px;   /* タブバーの文字などごく小さいラベルだけ */
+  --text-input: 16px; /* 入力欄。16px 未満だと iOS がフォーカス時に拡大する */
+  --leading-relaxed: 1.625; /* 和文の本文 */
+  --leading-tight: 1.25;    /* 見出し */
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 13px;  /* 入力欄の内側 */
+  --space-4: 17px;  /* 要素の間・シートの内側 */
+  --space-5: 21px;  /* カードの内側 */
+  --space-6: 26px;  /* ボタンの左右 */
+
+  --radius-xl: 13px;     /* 入力欄・エラー表示 */
+  --radius-2xl: 17px;    /* カード・ボタン */
+  --radius-full: 9999px; /* バッジ・アイコンボタン・タブバー */
+  --tap-min: 48px;       /* 押せる要素の最小。HIG 44pt と M3 48dp の大きい方 */
+
+  /* --- 影（MyHood と同じ。ダークは濃く） --- */
+  --shadow-sm: 0 1px 2px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.3));
+  --shadow-md: 0 4px 12px light-dark(rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.4)),
+               0 2px 4px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.3));
+
+  /* --- 動き（M3 standard easing。reduced-motion では ui.css で無効化） --- */
+  --ease-standard: cubic-bezier(.2, 0, 0, 1);
+  --dur-short: 150ms;
+  --dur-medium: 250ms;
+}
