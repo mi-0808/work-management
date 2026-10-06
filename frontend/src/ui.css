@@ -1,0 +1,197 @@
+/* 共通部品の見た目（規定: docs/デザイン規定.md / 一覧: /catalog）
+   値は tokens.css だけを参照する。寸法は MyHood の同名部品（PrimaryButton / BaseCard / Input / Badge /
+   ErrorMessage / PageHeader / HeaderIconButton / TabBar）と同じ。
+   app.css は @layer legacy に入れてあるので、レイヤー外のここが常に勝つ */
+
+.ui-root {
+  color-scheme: light dark; /* ponytail: 移行中は新しい画面だけ。旧画面を消し終えたら :root へ移す */
+  min-height: 100dvh;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  font: 400 var(--text-base)/var(--leading-relaxed) var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+.ui-root[data-theme="light"] { color-scheme: light; }
+.ui-root[data-theme="dark"] { color-scheme: dark; }
+.ui-root, .ui-root *, .ui-root *::before, .ui-root *::after { box-sizing: border-box; }
+.ui-root :focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
+
+/* 画面の器: 下部タブに隠れないよう下を空ける */
+.ui-page {
+  display: grid; gap: var(--space-4);
+  max-width: 720px; margin: 0 auto;
+  padding: var(--space-4) var(--space-4) calc(100px + env(safe-area-inset-bottom));
+}
+
+.ui-icon { width: 24px; height: 24px; flex: none; }
+
+/* 押す・なぞるは新しい色を作らず、文字色を重ねる（M3 の state layer。8% / 10%） */
+.ui-state {
+  --_layer: transparent; /* 親の重ね色を引き継がない */
+  background-image: linear-gradient(var(--_layer), var(--_layer));
+}
+@media (hover: hover) {
+  .ui-state:hover:not(:disabled) {
+    --_layer: color-mix(in srgb, currentColor calc(var(--md-sys-state-hover-state-layer-opacity) * 100%), transparent);
+  }
+}
+.ui-state:active:not(:disabled) {
+  --_layer: color-mix(in srgb, currentColor calc(var(--md-sys-state-pressed-state-layer-opacity) * 100%), transparent);
+}
+
+/* --- ボタン（MyHood PrimaryButton: px-6 py-3 rounded-2xl font-medium） --- */
+.ui-btn {
+  --_c: var(--md-sys-color-primary);
+  --_on: var(--md-sys-color-on-primary);
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  min-height: var(--tap-min);
+  padding: var(--space-3) var(--space-6);
+  border: 1px solid transparent; border-radius: var(--radius-2xl);
+  font: 500 var(--text-base)/1.5 var(--font-sans);
+  cursor: pointer;
+  transition: transform var(--dur-short) var(--ease-standard);
+}
+.ui-btn.danger { --_c: var(--md-sys-color-error); --_on: var(--md-sys-color-on-error); }
+.ui-btn:active:not(:disabled) { transform: scale(.98); }
+.ui-btn:disabled { opacity: .5; cursor: not-allowed; }
+.ui-btn .ui-icon { width: 20px; height: 20px; }
+.ui-btn-primary { background-color: var(--_c); color: var(--_on); box-shadow: var(--shadow-md); }
+.ui-btn-outline { background-color: transparent; color: var(--_c); border-color: color-mix(in oklab, var(--_c) 30%, transparent); }
+.ui-btn-ghost { background-color: transparent; color: var(--md-sys-color-on-surface); }
+.ui-btn-ghost.danger { color: var(--_c); }
+.ui-btn-full { width: 100%; }
+
+/* --- アイコンボタン（MyHood HeaderIconButton: 白い丸 + 影） --- */
+.ui-icon-btn {
+  position: relative; display: inline-grid; place-items: center; flex: none;
+  width: var(--tap-min); height: var(--tap-min); padding: 0;
+  border: none; border-radius: var(--radius-full);
+  background-color: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+.ui-icon-btn-badge {
+  position: absolute; top: -2px; right: -2px;
+  min-width: 18px; height: 18px; padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--md-sys-color-error); color: var(--md-sys-color-on-error);
+  font: 700 var(--text-2xs)/18px var(--font-sans);
+}
+
+/* --- ヘッダー（MyHood PageHeader: 地 95% + ぼかし、行の高さ 52px） --- */
+.ui-header {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: var(--space-2);
+  height: calc(52px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) var(--space-3) 0;
+  background: color-mix(in oklab, var(--md-sys-color-surface) 95%, transparent);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.ui-header-title {
+  flex: 1; min-width: 0; margin: 0;
+  font: 700 var(--text-base)/1.5 var(--font-sans);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ui-header-actions { display: flex; gap: var(--space-2); }
+
+/* --- カード（MyHood BaseCard: rounded-2xl + 淡い枠 + 影 + 下へ薄くなる面。内側は p-5） --- */
+.ui-card {
+  padding: var(--space-5);
+  border: 1px solid color-mix(in oklab, var(--md-sys-color-outline) 40%, transparent);
+  border-radius: var(--radius-2xl);
+  background: linear-gradient(var(--md-sys-color-surface),
+    color-mix(in oklab, var(--md-sys-color-surface-container) 40%, var(--md-sys-color-surface)));
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.ui-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.ui-card-title { margin: 0; font: 500 var(--text-lg)/var(--leading-tight) var(--font-sans); }
+
+/* --- 入力欄（MyHood Input / Textarea: M3 の outlined text field） --- */
+.ui-field { display: grid; gap: var(--space-2); }
+.ui-field-label { font: 500 var(--text-sm)/1.45 var(--font-sans); color: var(--md-sys-color-on-surface); }
+.ui-field-required { color: var(--md-sys-color-error); }
+.ui-field-hint { margin: 0; font-size: var(--text-sm); line-height: 1.45; color: var(--md-sys-color-on-surface-variant); }
+.ui-input {
+  width: 100%; min-height: var(--tap-min);
+  padding: var(--space-3);
+  border: 1px solid var(--md-sys-color-outline); border-radius: var(--radius-xl);
+  background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);
+  font: 400 var(--text-input)/1.5 var(--font-sans);
+}
+.ui-input::placeholder { color: var(--md-sys-color-on-surface-variant); }
+/* フォーカスは 2px の枠（outline なのでハイコントラストモードでも消えない） */
+.ui-input:focus { outline: 2px solid var(--md-sys-color-primary); outline-offset: -1px; }
+.ui-input[aria-invalid="true"] { border-color: var(--md-sys-color-error); }
+.ui-input[aria-invalid="true"]:focus { outline-color: var(--md-sys-color-error); }
+.ui-input:disabled { opacity: .5; cursor: not-allowed; }
+textarea.ui-input { min-height: 120px; resize: vertical; line-height: var(--leading-relaxed); }
+
+/* --- エラー表示（MyHood ErrorMessage: エラー色 5% の面 + 20% の枠 + アイコン） --- */
+.ui-error {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid color-mix(in oklab, var(--md-sys-color-error) 20%, transparent);
+  border-radius: var(--radius-xl);
+  background: color-mix(in oklab, var(--md-sys-color-error) 5%, transparent);
+  color: var(--md-sys-color-error);
+  font: 400 var(--text-sm)/1.45 var(--font-sans);
+}
+.ui-error .ui-icon { width: 17px; height: 17px; margin-top: 3px; }
+
+/* --- バッジ（MyHood Badge: px-2.5 py-1 rounded-full text-xs）。色だけで伝えずアイコンか文言を添える --- */
+.ui-badge {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: var(--space-1) 10px;
+  border-radius: var(--radius-full);
+  font: 400 var(--text-xs)/1.4 var(--font-sans);
+  white-space: nowrap;
+}
+.ui-badge .ui-icon { width: 14px; height: 14px; }
+.ui-badge-neutral { background: color-mix(in oklab, var(--md-sys-color-primary) 5%, transparent); color: var(--md-sys-color-on-surface-variant); }
+.ui-badge-primary { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.ui-badge-error { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+
+/* --- 下部タブ（MyHood TabBar: 画面下に浮くガラスのカプセル。選択中だけ白い丸） --- */
+.ui-tabbar {
+  position: fixed; z-index: 50;
+  left: 50%; bottom: calc(env(safe-area-inset-bottom) + 12px); transform: translateX(-50%);
+  width: calc(100% - 2 * var(--space-4)); max-width: 390px;
+  display: flex; gap: 2px; padding: 4px;
+  border: 1px solid var(--glass-tabbar-border); border-radius: var(--radius-full);
+  background: var(--glass-tabbar-bg);
+  box-shadow: var(--glass-tabbar-shadow);
+  -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px);
+}
+.ui-tab {
+  flex: 1; min-width: 0; height: 52px; padding: 0 var(--space-1);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  border: none; border-radius: var(--radius-full);
+  background-color: transparent; color: var(--md-sys-color-on-surface-variant);
+  font: 500 var(--text-2xs)/14px var(--font-sans);
+  white-space: nowrap; user-select: none; cursor: pointer;
+}
+.ui-tab .ui-icon { width: 22px; height: 22px; }
+/* 選択中は色と白い丸だけで示す（太さを変えるとアイコンが揺れて見える） */
+.ui-tab[aria-current="page"] {
+  background-color: var(--glass-tabbar-active-bg);
+  box-shadow: var(--glass-tabbar-active-shadow);
+  color: var(--md-sys-color-primary);
+}
+
+/* すりガラスが使えない・透明を減らす設定では不透明の地にする */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .ui-tabbar, .ui-header { background: var(--md-sys-color-surface); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .ui-tabbar, .ui-header { background: var(--md-sys-color-surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-root *, .ui-root *::before, .ui-root *::after {
+    transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+  }
+  .ui-btn:active:not(:disabled) { transform: none; }
+}

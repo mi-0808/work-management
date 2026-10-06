@@ -2,6 +2,8 @@
    白基調＋境界線でメリハリ。アクセントはエメラルド #007f66（白地4.97:1）、
    ブランドはエメラルド→ブルーの深色グラデ（白文字全域4.5:1保証）。
    ヘッダーは黒系グラデ、タブバーはライトガラス。全て MyhoodBeta/src/styles/theme.css 準拠 */
+/* 旧スタイル。新しい画面は ui.css（レイヤー外なので常にこちらより優先）。画面を作り直したら消していく */
+@layer legacy {
 :root {
   /* テキスト階層（MyHood: text / secondary / muted / faint） */
   --ink: #0f172a;
@@ -881,3 +883,4 @@ button.member-icon { background: none; border: none; cursor: pointer; padding: 4
 .office-info h3 { margin: 4px 0 10px; font-size: 14px; font-weight: 800; color: var(--ink); }
 .office-info .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 14px; margin-bottom: 18px; }
 .office-info label { display: flex; flex-direction: column; gap: 6px; margin: 0; font-size: 13px; font-weight: 700; color: var(--text-secondary); }
+}
