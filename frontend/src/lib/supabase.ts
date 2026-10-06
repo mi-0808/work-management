@@ -33,7 +33,8 @@ export type Member = {
   status: 'invited' | 'active' | 'disabled'
   work_start: string // "HH:MM:SS"
   work_end: string
-  hourly_rate: number // 時給（円）。0は給与制＝請求書フロー対象外
+  hourly_rate: number // 時給（円）
+  contract_amount?: number | null // 月額契約の金額（円）。nullなら時給制
 }
 
 export type Invoice = {
