@@ -1,10 +1,16 @@
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isProviderEnabled, supabase, today } from './lib/supabase'
 import { DEMO, DEMO_MEMBERS } from './lib/demo'
 import type { Attendance, Break, Member, Report as ReportRow } from './lib/supabase'
+import {
+  Avatar, Badge, Button, Card, DateChip, Divider, ErrorMessage, Header, IconButton, List, ListRow,
+  LeadingIcon, Notice, SegmentedControl, SelectField, Sidebar, Stats, TabBar, TextField, type IconName, type TabItem,
+} from './ui'
+import { applyTheme, readTheme } from './theme'
 
-type Tab = 'home' | 'timecard' | 'profile'
+type Tab = 'home' | 'timecard' | 'profile' | 'settings'
+type Company = { id: string; name: string; icon: string }
 
 const fmtTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'
@@ -166,72 +172,51 @@ function Auth() {
     (mode !== 'signup' || !!name)
 
   return (
-    <div className="auth">
-      <div className="card">
-        <div className="brand" style={{ justifyContent: 'center', marginBottom: 4 }}>
-          <DayDeedLogo /><span>Day<span style={{ color: '#0e9f78' }}>Deed</span></span>
-        </div>
-        <p className="auth-lead">
-          {mode === 'signin' ? 'アカウントにログイン'
-            : mode === 'signup' ? '新しいアカウントを作成'
-            : 'パスワードを再設定します'}
-        </p>
-
+    <main className="ui-page narrow">
+      <div className="ui-row center">
+        <DayDeedLogo size={44} /><h1 className="ui-title">DayDeed</h1>
+      </div>
+      <Card title={mode === 'signin' ? 'ログイン' : mode === 'signup' ? '新しいアカウントを作成' : 'パスワードを再設定'}>
         {mode !== 'reset' && googleOk && (
           <>
-            <button className="btn-google" onClick={google}>
+            <Button variant="outline" fullWidth onClick={google}>
               <GoogleLogo />Google で{mode === 'signup' ? '登録' : 'ログイン'}
-            </button>
-            <div className="auth-divider"><span>または</span></div>
+            </Button>
+            <Divider>または</Divider>
           </>
         )}
-
-        <form onSubmit={(e) => { e.preventDefault(); submit() }}>
+        <form className="ui-stack" onSubmit={(e) => { e.preventDefault(); submit() }}>
           {mode === 'signup' && (
-            <>
-              <label htmlFor="au-name">名前</label>
-              <input id="au-name" type="text" autoComplete="name" placeholder="山田 太郎"
-                value={name} onChange={(e) => setName(e.target.value)} />
-            </>
+            <TextField label="名前" autoComplete="name" placeholder="山田 太郎"
+              value={name} onChange={(e) => setName(e.target.value)} />
           )}
-          <label htmlFor="au-email">メールアドレス</label>
-          <input id="au-email" type="email" autoComplete="email" placeholder="you@example.com"
+          <TextField label="メールアドレス" type="email" autoComplete="email" placeholder="you@example.com"
             value={email} onChange={(e) => setEmail(e.target.value)} />
           {mode !== 'reset' && (
-            <>
-              <label htmlFor="au-pw">パスワード</label>
-              <input id="au-pw" type="password" placeholder={mode === 'signup' ? '8文字以上' : ''}
-                autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                value={password} onChange={(e) => setPassword(e.target.value)} />
-            </>
+            <TextField label="パスワード" type="password" hint={mode === 'signup' ? '8文字以上' : undefined}
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+              value={password} onChange={(e) => setPassword(e.target.value)} />
           )}
-
-          {err && <div className="notice warn">{err}</div>}
-          {info && <div className="notice">{info}</div>}
-
-          <button className="btn-primary" style={{ width: '100%' }} disabled={!canSubmit || busy}>
+          {err && <ErrorMessage>{err}</ErrorMessage>}
+          {info && <Notice icon="check">{info}</Notice>}
+          <Button type="submit" fullWidth disabled={!canSubmit || busy}>
             {busy ? '処理中…'
               : mode === 'signin' ? 'ログイン'
               : mode === 'signup' ? 'アカウントを作成'
               : '再設定メールを送信'}
-          </button>
+          </Button>
         </form>
-
-        <div className="auth-links">
-          {mode === 'signin' && (
-            <>
-              <button onClick={() => reset('reset')}>パスワードを忘れた</button>
-              <button onClick={() => reset('signup')}>アカウントを作成</button>
-            </>
-          )}
-          {mode === 'signup' && <button onClick={() => reset('signin')}>ログインに戻る</button>}
-          {mode === 'reset' && <button onClick={() => reset('signin')}>ログインに戻る</button>}
-        </div>
-        <div className="auth-links">
-          <a href="/demo">アカウントなしでデモを見る</a>
-        </div>
+      </Card>
+      <div className="ui-row center">
+        {mode === 'signin' ? (
+          <>
+            <Button variant="ghost" onClick={() => reset('reset')}>パスワードを忘れた</Button>
+            <Button variant="ghost" onClick={() => reset('signup')}>アカウントを作成</Button>
+          </>
+        ) : <Button variant="ghost" onClick={() => reset('signin')}>ログインに戻る</Button>}
       </div>
-    </div>
+      <p className="ui-secondary ui-center"><a href="/demo">アカウントなしでデモを見る</a></p>
+    </main>
   )
 }
 
@@ -248,17 +233,16 @@ function NewPassword({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <div className="auth">
-      <div className="card">
-        <h2>新しいパスワードを設定</h2>
-        <label htmlFor="np-pw">新しいパスワード</label>
-        <input id="np-pw" type="password" autoComplete="new-password" placeholder="8文字以上"
-          value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
-        {err && <div className="notice warn">{err}</div>}
-        <button className="btn-primary" style={{ width: '100%' }}
-          disabled={password.length < 8} onClick={save}>パスワードを変更</button>
-      </div>
-    </div>
+    <main className="ui-page narrow">
+      <Card title="新しいパスワードを設定">
+        <form className="ui-stack" onSubmit={(e) => { e.preventDefault(); save() }}>
+          <TextField label="新しいパスワード" type="password" autoComplete="new-password" hint="8文字以上"
+            value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+          {err && <ErrorMessage>{err}</ErrorMessage>}
+          <Button type="submit" fullWidth disabled={password.length < 8}>パスワードを変更</Button>
+        </form>
+      </Card>
+    </main>
   )
 }
 
@@ -286,76 +270,85 @@ function Onboarding({ email, onDone }: { email: string; onDone: () => void }) {
   }
 
   if (choice === 'none') return (
-    <div className="auth">
-      <div className="card">
-        <h2>ようこそ</h2>
-        <p className="onb-lead">
-          <b>{email}</b> でログインしました。<br />
-          どちらの立場か選んでください。
-        </p>
-        <button className="onb-choice" onClick={() => setChoice('create')}>
-          <div className="onb-choice-title">会社を新しく作る</div>
-          <div className="onb-choice-desc">
-            あなたが<b>管理者</b>になります。メンバーの招待、権限や勤務時間の管理ができます
-          </div>
-        </button>
-        <button className="onb-choice" onClick={() => setChoice('invited')}>
-          <div className="onb-choice-title">会社に招待されている</div>
-          <div className="onb-choice-desc">
-            従業員として参加します。管理者に名簿へ登録してもらう必要があります
-          </div>
-        </button>
-      </div>
-    </div>
+    <main className="ui-page narrow">
+      <Card title="ようこそ">
+        <p className="ui-text"><b>{email}</b> でログインしました。どちらの立場か選んでください。</p>
+        <List label="立場">
+          <ListRow title="会社を新しく作る" onClick={() => setChoice('create')}
+            subtitle="あなたが管理者になります。メンバーの招待、権限や勤務時間の管理ができます" />
+          <ListRow title="会社に招待されている" onClick={() => setChoice('invited')}
+            subtitle="従業員として参加します。管理者に名簿へ登録してもらう必要があります" />
+        </List>
+      </Card>
+    </main>
   )
 
   if (choice === 'invited') return (
-    <div className="auth">
-      <div className="card">
-        <h2>会社に参加</h2>
-        <p className="onb-lead">管理者から共有された参加コードを入力してください。</p>
-        <label htmlFor="onb-code">参加コード</label>
-        <input id="onb-code" className="code-input" type="text" placeholder="ABC123" autoFocus
-          maxLength={6} value={code}
-          onChange={(e) => { setCode(e.target.value.toUpperCase()); setErr('') }} />
-        {err && <div className="notice warn">{err}</div>}
-        <button className="btn-primary" style={{ width: '100%' }}
-          disabled={code.length < 6 || busy} onClick={join}>
-          {busy ? '参加中…' : '参加する'}
-        </button>
-        <div className="notice">
-          コードが分からない場合は、管理者に <b>{email}</b> で名簿へ登録してもらってから、このページを再読み込みしても参加できます
-        </div>
-        <div className="auth-links">
-          <button onClick={() => setChoice('none')}>戻る</button>
-          <button onClick={() => supabase.auth.signOut()}>ログアウト</button>
-        </div>
-      </div>
-    </div>
+    <>
+      <Header title="会社に参加" onBack={() => setChoice('none')} />
+      <main className="ui-page narrow">
+        <Card>
+          <form className="ui-stack" onSubmit={(e) => { e.preventDefault(); join() }}>
+            <p className="ui-text">管理者から共有された参加コードを入力してください。</p>
+            <TextField label="参加コード" placeholder="ABC123" autoFocus autoComplete="off" autoCapitalize="characters"
+              maxLength={6} value={code}
+              onChange={(e) => { setCode(e.target.value.toUpperCase()); setErr('') }} />
+            {err && <ErrorMessage>{err}</ErrorMessage>}
+            <Button type="submit" fullWidth disabled={code.length < 6 || busy}>
+              {busy ? '参加中…' : '参加する'}
+            </Button>
+          </form>
+          <Notice>
+            コードが分からない場合は、管理者に <b>{email}</b> で名簿へ登録してもらってから、このページを再読み込みしても参加できます
+          </Notice>
+        </Card>
+        <Button variant="ghost" onClick={() => supabase.auth.signOut()}>ログアウト</Button>
+      </main>
+    </>
   )
 
   return (
-    <div className="auth">
-      <div className="card">
-        <h2>会社を作成</h2>
-        <p className="onb-lead">作成すると、あなたがこの会社の管理者になります。</p>
-        <label>会社名</label>
-        <input type="text" placeholder="例: 株式会社サンプル" autoFocus
-          value={name} onChange={(e) => setName(e.target.value)} />
-        {err && <div className="notice warn">{err}</div>}
-        <button className="btn-primary" style={{ width: '100%' }} disabled={!name} onClick={create}>
-          作成して始める
-        </button>
-        <div className="auth-links">
-          <button onClick={() => setChoice('none')}>戻る</button>
-        </div>
+    <>
+      <Header title="会社を作成" onBack={() => setChoice('none')} />
+      <main className="ui-page narrow">
+        <Card>
+          <form className="ui-stack" onSubmit={(e) => { e.preventDefault(); create() }}>
+            <p className="ui-text">作成すると、あなたがこの会社の管理者になります。</p>
+            <TextField label="会社名" placeholder="例: 株式会社サンプル" autoFocus
+              value={name} onChange={(e) => setName(e.target.value)} />
+            {err && <ErrorMessage>{err}</ErrorMessage>}
+            <Button type="submit" fullWidth disabled={!name}>作成して始める</Button>
+          </form>
+        </Card>
+      </main>
+    </>
+  )
+}
+
+/* ---------- 今日の記録の時刻エディタ（行をタップするとその下に開く。iOS カレンダーの日時欄と同じ） ---------- */
+function TimeEditor({ fields, onSave, onCancel, onDelete }: {
+  fields: { label: string; value: string; onChange: (v: string) => void; hint?: string }[]
+  onSave: () => void; onCancel: () => void; onDelete?: () => void
+}) {
+  return (
+    <form className="ui-stack" onSubmit={(e) => { e.preventDefault(); onSave() }}>
+      <div className="ui-row">
+        {fields.map((f, i) => (
+          <TextField key={f.label} type="time" label={f.label} hint={f.hint} autoFocus={i === 0}
+            value={f.value} onChange={(e) => f.onChange(e.target.value)} />
+        ))}
       </div>
-    </div>
+      <div className="ui-row">
+        <Button type="submit" variant="outline">保存</Button>
+        <Button variant="ghost" onClick={onCancel}>キャンセル</Button>
+        {onDelete && <Button variant="ghost" danger className="ui-push" onClick={onDelete}>削除</Button>}
+      </div>
+    </form>
   )
 }
 
 /* ---------- 出勤・退勤 ---------- */
-function Home({ me }: { me: Member }) {
+function Home({ me, title }: { me: Member; title: ReactNode }) {
   const now = useClock()
   const [att, setAtt] = useState<Attendance | null>(null)
   const [plan, setPlan] = useState('')
@@ -518,142 +511,111 @@ function Home({ me }: { me: Member }) {
   }
 
 
+  // 今押すべき操作だけを塗りボタンにする（出勤 → 退勤 / 中抜け中は中抜けを終了）。退勤後は塗りなし
+  const primary: { label: string; icon: IconName; onClick: () => void } | null = !att?.clock_in ? { label: '出勤する', icon: 'login', onClick: punchIn }
+    : att.clock_out ? null
+    : openBreak ? { label: '中抜けを終了', icon: 'play', onClick: endBreak }
+    : { label: '退勤する', icon: 'logout', onClick: () => punchOut() }
+  const secondary: { label: string; icon: IconName; onClick: () => void } | null = att?.clock_out ? { label: '勤務を再開', icon: 'play', onClick: resume }
+    : att?.clock_in && !openBreak ? { label: '中抜け・休憩', icon: 'pause', onClick: startBreak }
+    : null
+  // 出勤後は現在時刻ではなく実働時間を主役に（休憩・中抜けは除いてリアルタイムに進む）
+  const sec = att?.clock_in ? Math.max(0, Math.floor(workedMinutes(att, now.getTime()) * 60)) : 0
+  const toggle = (key: string, open: () => void) => (editing === key ? setEditing(null) : open())
+  const cancel = () => setEditing(null)
+  const breaks = [...(att?.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
+
   return (
     <>
-      <div className="hero">
-        <div className="date">
-          {now.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}
-          {' · '}<b>{status}</b>
-        </div>
-        {att?.clock_in ? (
-          // 出勤後は現在時刻ではなく実働時間を主役に（休憩・中抜けは除いてリアルタイムに進む）
-          (() => {
-            const sec = Math.max(0, Math.floor(workedMinutes(att, now.getTime()) * 60))
-            return (
-              <div className="clock">
-                {Math.floor(sec / 3600)}:{String(Math.floor((sec % 3600) / 60)).padStart(2, '0')}
-                <span className="sec">:{String(sec % 60).padStart(2, '0')} 実働</span>
-              </div>
-            )
-          })()
-        ) : (
-          <div className="clock">
-            {now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
-            <span className="sec">:{String(now.getSeconds()).padStart(2, '0')}</span>
-          </div>
-        )}
-        {err && <div className="notice warn">{err}</div>}
-        <div className="punch-row">
-          {editing === 'in' ? (
-            <div className="btn btn-in btn-editing">
-              <span>出勤</span>
-              <input type="time" autoFocus aria-label="出勤時刻" value={editTime}
-                onChange={(e) => setEditTime(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && commitEdit()} />
-              <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
-              <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
-            </div>
+      <Header title={title} />
+      <main className="ui-page">
+        <section className="ui-hero" aria-label="今日の勤務">
+          <span className="ui-secondary">
+            {now.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' })}
+          </span>
+          {att?.clock_in ? (
+            <p className="ui-display">
+              {Math.floor(sec / 3600)}:{String(Math.floor((sec % 3600) / 60)).padStart(2, '0')}
+              <small>:{String(sec % 60).padStart(2, '0')}</small>
+            </p>
           ) : (
-            <div className="btn-split">
-              <button className="btn btn-in" disabled={!!att?.clock_in} onClick={punchIn}>
-                {att?.clock_in ? `出勤 ${fmtTime(att.clock_in)}` : '出勤する'}
-              </button>
-              <button className="icon-btn on-in" aria-label="出勤時刻を指定・修正"
-                onClick={() => openEdit('in')}>✎</button>
-            </div>
+            <p className="ui-display">
+              {now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+              <small>:{String(now.getSeconds()).padStart(2, '0')}</small>
+            </p>
           )}
-          {editing === 'out' ? (
-            <div className="btn btn-out btn-editing">
-              <span>退勤</span>
-              <input type="time" autoFocus aria-label="退勤時刻" value={editTime}
-                onChange={(e) => setEditTime(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && commitEdit()} />
-              <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
-              <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
-            </div>
-          ) : (
-            <div className="btn-split">
-              {att?.clock_out ? (
-                <button className="btn btn-out" onClick={resume}>勤務を再開</button>
-              ) : (
-                <button className="btn btn-out" disabled={!!openBreak} onClick={() => punchOut()}>退勤する</button>
-              )}
-              <button className="icon-btn on-out" aria-label="退勤時刻を指定・修正（押し忘れの修正）"
-                onClick={() => openEdit('out')}>✎</button>
-            </div>
-          )}
-        </div>
-        {att?.clock_in && (
-          <div className="punch-row" style={{ marginTop: 10, flexWrap: 'wrap' }}>
-            {(att.breaks ?? []).filter((b) => b.ended_at).map((b) =>
-              editing === b.id ? (
-                <div key={b.id} className="btn btn-break btn-editing">
-                  <span>中抜け</span>
-                  <input type="time" autoFocus aria-label="中抜け開始" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
-                  <span>–</span>
-                  <input type="time" aria-label="中抜け終了" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
-                  <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
-                  <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
-                  <button className="edit-delete" onClick={() => deleteBreak(b.id)}>削除</button>
-                </div>
-              ) : (
-                <div key={b.id} className="btn-split chip">
-                  <span className="btn btn-chip">中抜け {fmtTime(b.started_at)}–{fmtTime(b.ended_at)}</span>
-                  <button className="icon-btn on-chip" aria-label="この中抜けの時刻を修正"
-                    onClick={() => openBreakEdit(b)}>✎</button>
-                </div>
-              ))}
-            {!att.clock_out && (openBreak ? (
-              editing === openBreak.id ? (
-                <div className="btn btn-break btn-editing">
-                  <span>中抜け</span>
-                  <input type="time" autoFocus aria-label="中抜け開始" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
-                  <span>–</span>
-                  <input type="time" aria-label="中抜け終了" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
-                  <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
-                  <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
-                  <button className="edit-delete" onClick={() => deleteBreak(openBreak.id)}>削除</button>
-                </div>
-              ) : (
-                <div className="btn-split">
-                  <button className="btn btn-break-end" onClick={endBreak}>
-                    中抜けを終了（{fmtTime(openBreak.started_at)}〜）
-                  </button>
-                  <button className="icon-btn on-break" aria-label="中抜けの開始時刻を修正"
-                    onClick={() => openBreakEdit(openBreak)}>✎</button>
-                </div>
-              )
-            ) : editing === 'newbreak' ? (
-              <div className="btn btn-break btn-editing">
-                <span>中抜け</span>
-                <input type="time" autoFocus aria-label="中抜け開始" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
-                <span>–</span>
-                <input type="time" aria-label="中抜け終了（空なら中抜け中）" value={editTime2} onChange={(e) => setEditTime2(e.target.value)} />
-                <button className="edit-ok" aria-label="保存" onClick={commitEdit}>✓</button>
-                <button className="edit-cancel" aria-label="キャンセル" onClick={() => setEditing(null)}>✕</button>
-              </div>
-            ) : (
-              <div className="btn-split">
-                <button className="btn btn-break" onClick={startBreak}>中抜け・休憩を開始</button>
-                <button className="icon-btn on-chip" aria-label="時刻を指定して中抜けを追加（付け忘れの入力）"
-                  onClick={openNewBreak}>✎</button>
-              </div>
-            ))}
-          </div>
-        )}
-        {att?.clock_out && (
-          <div className="hero-note">退勤 {fmtTime(att.clock_out)}・実働 {workedLabel(att)}</div>
-        )}
-      </div>
+          <Badge tone={status === '勤務中' ? 'primary' : 'neutral'}
+            icon={status === '勤務中' ? 'check' : status === '中抜け中' ? 'pause' : status === '退勤済み' ? 'logout' : 'clock'}>
+            {status}{att?.clock_in ? '・実働' : ''}
+          </Badge>
+        </section>
 
-      <HomeDashboard me={me} />
+        {err && <ErrorMessage>{err}</ErrorMessage>}
+        {(primary || secondary) && (
+          <div className="ui-tiles">
+            {primary && <Button tile icon={primary.icon} onClick={primary.onClick}>{primary.label}</Button>}
+            {secondary && <Button tile variant="outline" icon={secondary.icon} onClick={secondary.onClick}>{secondary.label}</Button>}
+          </div>
+        )}
+
+        <HomeDashboard me={me}>
+        <Card title="今日の記録" icon="list">
+          <List label="今日の記録">
+            <ListRow leading={<LeadingIcon name="login" tone={att?.clock_in ? undefined : 'muted'} />} title="出勤"
+              subtitle={att?.auto_in ? '自動補完（タップして修正）' : att?.clock_in ? undefined : 'タップで時刻を指定'}
+              expanded={editing === 'in'} onClick={() => toggle('in', () => openEdit('in'))}
+              trailing={fmtTime(att?.clock_in ?? null)}>
+              {editing === 'in' && (
+                <TimeEditor fields={[{ label: '出勤時刻', value: editTime, onChange: setEditTime }]}
+                  onSave={commitEdit} onCancel={cancel} />
+              )}
+            </ListRow>
+            {att?.clock_in && breaks.map((b) => (
+              <ListRow key={b.id} leading={<LeadingIcon name="pause" tone="soft" />} title="中抜け"
+                subtitle={b.ended_at ? undefined : '中抜け中'}
+                expanded={editing === b.id} onClick={() => toggle(b.id, () => openBreakEdit(b))}
+                trailing={`${fmtTime(b.started_at)}–${b.ended_at ? fmtTime(b.ended_at) : ''}`}>
+                {editing === b.id && (
+                  <TimeEditor onSave={commitEdit} onCancel={cancel} onDelete={() => deleteBreak(b.id)} fields={[
+                    { label: '開始', value: editTime, onChange: setEditTime },
+                    { label: '終了', value: editTime2, onChange: setEditTime2, hint: '空欄にすると中抜け中に戻ります' },
+                  ]} />
+                )}
+              </ListRow>
+            ))}
+            <ListRow leading={<LeadingIcon name="logout" tone={att?.clock_out ? undefined : 'muted'} />} title="退勤"
+              subtitle={att?.auto_out ? '自動補完（タップして修正）' : att?.clock_out ? undefined : '押し忘れはタップで指定'}
+              expanded={editing === 'out'} onClick={() => toggle('out', () => openEdit('out'))}
+              trailing={fmtTime(att?.clock_out ?? null)}>
+              {editing === 'out' && (
+                <TimeEditor onSave={commitEdit} onCancel={cancel} fields={[{
+                  label: '退勤時刻', value: editTime, onChange: setEditTime,
+                  hint: att?.clock_in ? undefined : `出勤は所定の開始時刻（${hm(me.work_start)}）で自動補完されます`,
+                }]} />
+              )}
+            </ListRow>
+            {att?.clock_in && !att.clock_out && !openBreak && (
+              <ListRow tone="primary" leading={<LeadingIcon name="plus" tone="soft" />} title="中抜けを後から追加"
+                expanded={editing === 'newbreak'} onClick={() => toggle('newbreak', openNewBreak)}>
+                {editing === 'newbreak' && (
+                  <TimeEditor onSave={commitEdit} onCancel={cancel} fields={[
+                    { label: '開始', value: editTime, onChange: setEditTime },
+                    { label: '終了', value: editTime2, onChange: setEditTime2, hint: '空欄なら中抜け中として記録します' },
+                  ]} />
+                )}
+              </ListRow>
+            )}
+          </List>
+        </Card>
+        </HomeDashboard>
+      </main>
     </>
   )
 }
 
 
 /* ---------- ホームの要約（今週・今月の実働と曜日別・給与見込み） ---------- */
-function HomeDashboard({ me }: { me: Member }) {
+function HomeDashboard({ me, children }: { me: Member; children: ReactNode }) {
   const [atts, setAtts] = useState<Attendance[]>([])
   const t = today()
   const month = t.slice(0, 7)
@@ -675,33 +637,73 @@ function HomeDashboard({ me }: { me: Member }) {
 
   return (
     <>
-      <div className="home-stats">
-        <div><span>今週</span><b>{hmm(weekMin)}</b></div>
-        <div><span>今月</span><b>{hmm(monthMin)}</b></div>
-        {(me.contract_amount != null || me.hourly_rate > 0) && (
-          <div><span>給与見込み</span><b>{yen(me.contract_amount ?? monthMin / 60 * me.hourly_rate)}</b></div>
-        )}
-      </div>
-
-      <div className="week-strip">
-        {weekDays.map((d) => (
-          <div key={d} className={d === t ? 'today' : ''}>
-            <span>{'月火水木金土日'[weekDays.indexOf(d)]}</span>
-            <b>{minOf(d) ? hmm(minOf(d)) : '–'}</b>
-          </div>
-        ))}
-      </div>
+      <Stats items={[
+        { label: '今週', icon: 'calendar', value: hmm(weekMin) },
+        { label: '今月', icon: 'chart', value: hmm(monthMin) },
+        ...(me.contract_amount != null || me.hourly_rate > 0
+          ? [{ label: '給与見込み', icon: 'yen' as const, value: yen(me.contract_amount ?? monthMin / 60 * me.hourly_rate) }] : []),
+      ]} />
+      {children}
+      <Card title="今週の実働" icon="calendar">
+        <Stats columns={7} items={weekDays.map((d, i) => ({
+          label: '月火水木金土日'[i], value: minOf(d) ? hmm(minOf(d)) : '–', current: d === t,
+        }))} />
+      </Card>
     </>
   )
 }
 
-/* ---------- 勤怠表（実績の詳細: 出勤・退勤・中抜け・実働・確定） ---------- */
+/* ---------- タイムカードの1日を開いた時の編集欄（行の下に開く。ホームの「今日の記録」と同じ） ---------- */
+type DayDraft = { inT: string; outT: string; brs: { s: string; e: string }[] }
+const sortedBreaks = (a: Attendance) => [...(a.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
+const breaksText = (brs: DayDraft['brs']) => brs.filter((b) => b.s || b.e).map((b) => `${b.s}-${b.e}`).join(', ')
+
+function DayEditor({ a, confirmed, onSave, onToggleConfirm, onClose }: {
+  a: Attendance; confirmed: boolean; onSave: (d: DayDraft) => void; onToggleConfirm: () => void; onClose: () => void
+}) {
+  const [inT, setIn] = useState(isoHm(a.clock_in))
+  const [outT, setOut] = useState(isoHm(a.clock_out))
+  const [brs, setBrs] = useState(() => sortedBreaks(a).map((b) => ({ s: isoHm(b.started_at), e: isoHm(b.ended_at) })))
+  const setBr = (i: number, patch: Partial<DayDraft['brs'][number]>) => setBrs(brs.map((b, j) => (j === i ? { ...b, ...patch } : b)))
+
+  // 確定した日は直せない（確定を取り消すと直せる）
+  if (confirmed) return (
+    <div className="ui-stack tight">
+      <p className="ui-secondary">確定済みの日は直せません。直すときは確定を取り消してください</p>
+      <div><Button variant="outline" onClick={onToggleConfirm}>確定を取り消す</Button></div>
+    </div>
+  )
+  return (
+    <form className="ui-stack" onSubmit={(e) => { e.preventDefault(); onSave({ inT, outT, brs }) }}>
+      <div className="ui-row">
+        <TextField type="time" label="出勤" autoFocus value={inT} onChange={(e) => setIn(e.target.value)} />
+        <TextField type="time" label="退勤" value={outT} onChange={(e) => setOut(e.target.value)} hint={a.clock_out ? undefined : '勤務中'} />
+      </div>
+      {brs.map((b, i) => (
+        <div className="ui-row end" key={i}>
+          <TextField type="time" label={`中抜け${i + 1} 開始`} value={b.s} onChange={(e) => setBr(i, { s: e.target.value })} />
+          <TextField type="time" label="終了" value={b.e} onChange={(e) => setBr(i, { e: e.target.value })} />
+          <IconButton plain icon="close" label={`中抜け${i + 1}を削除`} onClick={() => setBrs(brs.filter((_, j) => j !== i))} />
+        </div>
+      ))}
+      <div><Button variant="ghost" icon="plus" onClick={() => setBrs([...brs, { s: '', e: '' }])}>中抜けを追加</Button></div>
+      <div className="ui-row">
+        <Button type="submit" variant="outline">保存</Button>
+        <Button variant="ghost" onClick={onClose}>キャンセル</Button>
+        {a.clock_out && <Button variant="ghost" icon="check" className="ui-push" onClick={onToggleConfirm}>この日を確定</Button>}
+      </div>
+    </form>
+  )
+}
+
+/* ---------- タイムカード（月の実績: 週ごとのリスト。行をタップすると開いて直せる） ---------- */
 function KintaiTable({ me }: { me: Member }) {
   const [atts, setAtts] = useState<Attendance[]>([])
   const [reps, setReps] = useState<ReportRow[]>([])
   const [month, setMonth] = useState(today().slice(0, 7))
   const [err, setErr] = useState('')
   const [savedAt, setSavedAt] = useState('')
+  const [open, setOpen] = useState<string | null>(null) // 開いている日（attendance の id）
 
   const load = useCallback(async () => {
     const [y, m] = month.split('-').map(Number)
@@ -720,6 +722,7 @@ function KintaiTable({ me }: { me: Member }) {
 
   const moveMonth = (delta: number) => {
     const [y, m] = month.split('-').map(Number)
+    setOpen(null)
     setMonth(new Date(y, m - 1 + delta, 1).toLocaleDateString('sv-SE').slice(0, 7))
   }
 
@@ -730,52 +733,56 @@ function KintaiTable({ me }: { me: Member }) {
     if (h > 23 || m > 59) return ''
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
   }
-  const fmtDate = (d: string) => {
-    const dt = new Date(d + 'T00:00')
-    return `${d.slice(5).replace('-', '/')}(${'日月火水木金土'[dt.getDay()]})`
-  }
   const toIso = (date: string, hmStr: string) => new Date(`${date}T${hmStr}:00`).toISOString()
   const flash = (date: string) => {
     setSavedAt(date)
     setTimeout(() => setSavedAt((s) => (s === date ? '' : s)), 1500)
   }
-  // 出勤/退勤の修正。手で直したら自動補完フラグは下ろす
+  // 出勤/退勤の修正。手で直したら自動補完フラグは下ろす。成功したら true
   const saveActual = async (date: string, field: 'clock_in' | 'clock_out', v: string) => {
-    if (!v) return load()
     setErr('')
     const { error } = await supabase.from('attendances').upsert(
       { member_id: me.id, work_date: date, [field]: toIso(date, v),
         [field === 'clock_in' ? 'auto_in' : 'auto_out']: false },
       { onConflict: 'member_id,work_date' },
     )
-    if (error) return setErr(`実績を保存できませんでした（${error.message}）`)
-    flash(date)
-    load()
+    if (error) { setErr(`実績を保存できませんでした（${error.message}）`); return false }
+    return true
   }
-  const breakList = (a: Attendance) =>
-    [...(a.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
-      .map((b) => `${fmtTime(b.started_at)}–${b.ended_at ? fmtTime(b.ended_at) : ''}`)
   const fmtBreaks = (a: Attendance) =>
-    [...(a.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
-      .map((b) => `${fmtTime(b.started_at)}–${b.ended_at ? fmtTime(b.ended_at) : ''}`).join(', ')
-  // 「1200-1300, 1500-1515」形式をパースしてその日のbreaksを入れ替える
+    sortedBreaks(a).map((b) => `${fmtTime(b.started_at)}–${b.ended_at ? fmtTime(b.ended_at) : ''}`).join(', ')
+  // 「1200-1300, 1500-1515」形式をパースしてその日のbreaksを入れ替える。成功したら true
   const saveBreaks = async (a: Attendance, text: string) => {
     setErr('')
     const parts = text.split(/[,、]/).map((s) => s.trim()).filter(Boolean)
     const ranges: [string, string][] = []
     for (const p of parts) {
       const [s, e] = p.split(/[-–~〜]/).map((t) => normTime(t ?? ''))
-      if (!s || !e) return setErr(`中抜けは「1200-1300」の形式で入力してください（${p} が読めませんでした）`)
+      if (!s || !e) { setErr(`中抜けは開始と終了の両方を入れてください（${p}）`); return false }
       ranges.push([s, e])
     }
     await supabase.from('breaks').delete().eq('attendance_id', a.id)
     for (const [s, e] of ranges) {
       const { error } = await supabase.from('breaks').insert(
         { attendance_id: a.id, started_at: toIso(a.work_date, s), ended_at: toIso(a.work_date, e) })
-      if (error) return setErr(`中抜けを保存できませんでした（${error.message}）`)
+      if (error) { setErr(`中抜けを保存できませんでした（${error.message}）`); return false }
     }
-    flash(a.work_date)
+    return true
+  }
+  // 開いた日の保存: 変わった所だけ書き込む。全部うまくいったら閉じる
+  const saveDay = async (a: Attendance, d: DayDraft) => {
+    const inChanged = !!d.inT && d.inT !== isoHm(a.clock_in)
+    const outChanged = !!d.outT && d.outT !== isoHm(a.clock_out)
+    const brsChanged = breaksText(d.brs) !== breaksText(sortedBreaks(a).map((b) => ({ s: isoHm(b.started_at), e: isoHm(b.ended_at) })))
+    if (!inChanged && !outChanged && !brsChanged) return setOpen(null) // 何も変えていなければ閉じるだけ
+    let ok = true
+    if (inChanged) ok = await saveActual(a.work_date, 'clock_in', d.inT)
+    if (ok && outChanged) ok = await saveActual(a.work_date, 'clock_out', d.outT)
+    if (ok && brsChanged) ok = await saveBreaks(a, breaksText(d.brs))
     load()
+    if (!ok) return
+    flash(a.work_date)
+    setOpen(null)
   }
   const toggleConfirm = async (a: Attendance) => {
     const rep = reps.find((r) => r.work_date === a.work_date)
@@ -786,117 +793,68 @@ function KintaiTable({ me }: { me: Member }) {
     )
     if (error) return setErr(`確定できませんでした（${error.message}）`)
     flash(a.work_date)
+    setOpen(null)
     load()
   }
 
   const [y, m] = month.split('-').map(Number)
   const days = atts.filter((a) => a.clock_in)
+  const done = days.filter((d) => d.clock_out)
+  const isConfirmed = (a: Attendance) => reps.find((r) => r.work_date === a.work_date)?.confirmed ?? false
+  // 週（月曜始まり）ごとにまとめる。並びは日付順のまま
+  const weeks = days.reduce<[string, Attendance[]][]>((acc, a) => {
+    const wk = weekOf(a.work_date)
+    const last = acc[acc.length - 1]
+    if (last?.[0] === wk) last[1].push(a)
+    else acc.push([wk, [a]])
+    return acc
+  }, [])
+
   return (
-    <div className="card card-plain">
-      <h2>
-        勤怠記録 <span className="tag">出勤・退勤・中抜けの実績</span>
-        <span className="month-nav">
-          <button aria-label="勤怠表の前の月" onClick={() => moveMonth(-1)}>◀</button>
-          <b>{y}年{m}月</b>
-          <button aria-label="勤怠表の次の月" onClick={() => moveMonth(1)}>▶</button>
-        </span>
-      </h2>
-      {days.length === 0 ? <div className="empty">この月の勤怠記録はありません</div> : (
-        <div className="plan-table-wrap">
-          <table className="plan-table">
-            <thead>
-              <tr><th>日付</th><th>出勤</th><th>退勤</th><th>中抜け</th><th>実働</th><th></th></tr>
-            </thead>
-            <tbody>
-              {days.map((a, idx) => {
-                const wk = weekOf(a.work_date)
-                const lastOfWeek = idx === days.length - 1 || weekOf(days[idx + 1].work_date) !== wk
-                const weekMin = days.filter((d) => weekOf(d.work_date) === wk && d.clock_out)
-                  .reduce((sum, d) => sum + workedMinutes(d), 0)
-                const confirmed = reps.find((r) => r.work_date === a.work_date)?.confirmed ?? false
-                return (
-                  <Fragment key={a.id}>
-                  <tr className={a.work_date === today() ? 'pt-today' : ''}>
-                    <td className="pt-date">{fmtDate(a.work_date)}
-                      {(a.auto_in || a.auto_out) && <span className="badge badge-yellow">⚠ 自動補完</span>}
-                      {savedAt === a.work_date && <span className="pt-saved" role="status">✓保存</span>}</td>
-                    {confirmed ? (
-                      <>
-                        <td className="pt-time pt-done">{fmtTime(a.clock_in)}</td>
-                        <td className="pt-time pt-done">{a.clock_out ? fmtTime(a.clock_out) : ''}</td>
-                        <td className="pt-time pt-done">{fmtBreaks(a)}</td>
-                      </>
-                    ) : (
-                      <>
-                        <td><input type="text" inputMode="numeric" className="pt-time" placeholder="0900"
-                          key={`in-${a.id}-${a.clock_in ?? ''}`} aria-label={`${fmtDate(a.work_date)}の出勤`}
-                          defaultValue={a.clock_in ? fmtTime(a.clock_in) : ''}
-                          onBlur={(e) => {
-                            const v = normTime(e.target.value)
-                            if (v !== (a.clock_in ? fmtTime(a.clock_in) : '')) saveActual(a.work_date, 'clock_in', v)
-                          }} /></td>
-                        <td><input type="text" inputMode="numeric" className="pt-time" placeholder="1800"
-                          key={`out-${a.id}-${a.clock_out ?? ''}`} aria-label={`${fmtDate(a.work_date)}の退勤`}
-                          defaultValue={a.clock_out ? fmtTime(a.clock_out) : ''}
-                          onBlur={(e) => {
-                            const v = normTime(e.target.value)
-                            if (v !== (a.clock_out ? fmtTime(a.clock_out) : '')) saveActual(a.work_date, 'clock_out', v)
-                          }} /></td>
-                        {/* 中抜けは1件1欄。✕で削除、一番下の欄に入力すると追加 */}
-                        <td className="pt-breaks" key={`br-${a.id}-${fmtBreaks(a)}`}>
-                          {breakList(a).map((val, i) => (
-                            <div className="pt-break-row" key={`${a.id}-${i}-${val}`}>
-                              <input type="text" inputMode="numeric" defaultValue={val}
-                                aria-label={`${fmtDate(a.work_date)}の中抜け${i + 1}（1200-1300形式）`}
-                                onBlur={(e) => {
-                                  const rest = breakList(a).filter((_, j) => j !== i)
-                                  const v = e.target.value.trim()
-                                  const all = (v ? [...rest, v] : rest).join(', ')
-                                  if (all !== fmtBreaks(a)) saveBreaks(a, all)
-                                }} />
-                              <button className="pt-break-del" aria-label={`中抜け${i + 1}を削除`}
-                                onClick={() => saveBreaks(a, breakList(a).filter((_, j) => j !== i).join(', '))}>✕</button>
-                            </div>
-                          ))}
-                          <input type="text" inputMode="numeric" className="pt-break-add"
-                            placeholder="＋ 1200-1300 で追加"
-                            aria-label={`${fmtDate(a.work_date)}に中抜けを追加（1200-1300形式）`}
-                            onBlur={(e) => {
-                              const v = e.target.value.trim()
-                              if (!v) return
-                              e.target.value = ''
-                              saveBreaks(a, [...breakList(a), v].join(', '))
-                            }} />
-                        </td>
-                      </>
-                    )}
-                    <td className="pt-time pt-worked-cell">{a.clock_out ? workedLabel(a) : '勤務中'}</td>
-                    <td>{a.clock_out && (
-                      <button className={`pt-fix-btn ${confirmed ? 'on' : ''}`} aria-pressed={confirmed}
-                        onClick={() => toggleConfirm(a)}>{confirmed ? '確定済' : '確定'}</button>
-                    )}</td>
-                  </tr>
-                  {lastOfWeek && (
-                    <tr className="pt-subtotal">
-                      <td colSpan={4}>{fmtDate(wk).slice(0, 5)}〜の週 合計</td>
-                      <td className="pt-time">{asHm(weekMin)}</td><td />
-                    </tr>
+    <>
+      <div className="ui-row center nowrap">
+        <IconButton icon="back" label="前の月" onClick={() => moveMonth(-1)} />
+        <p className="ui-month">{y}年{m}月</p>
+        <IconButton icon="chevron" label="次の月" onClick={() => moveMonth(1)} />
+      </div>
+      <Stats items={[
+        { label: '合計', icon: 'clock', value: hmm(done.reduce((sum, d) => sum + workedMinutes(d), 0)) },
+        { label: '出勤', icon: 'calendar', value: `${days.length}日` },
+        { label: '確定', icon: 'check', value: `${done.filter(isConfirmed).length}/${done.length}` },
+      ]} />
+      {err && <ErrorMessage>{err}</ErrorMessage>}
+      {days.length === 0 && <p className="ui-secondary ui-center">この月の勤怠記録はありません</p>}
+      {weeks.map(([wk, list]) => (
+        <Card key={wk} icon="calendar" title={`${+wk.slice(5, 7)}月${+wk.slice(8)}日〜の週`}
+          action={<span className="ui-secondary">合計 {asHm(list.filter((d) => d.clock_out).reduce((sum, d) => sum + workedMinutes(d), 0))}</span>}>
+          <List label={`${+wk.slice(5, 7)}月${+wk.slice(8)}日からの週の勤怠`}>
+            {list.map((a) => {
+              const confirmed = isConfirmed(a)
+              const dt = new Date(a.work_date + 'T00:00')
+              return (
+                <ListRow key={a.id}
+                  leading={<DateChip day={dt.getDate()} weekday={'日月火水木金土'[dt.getDay()]} current={a.work_date === today()} />}
+                  title={`${fmtTime(a.clock_in)} – ${a.clock_out ? fmtTime(a.clock_out) : '勤務中'}`}
+                  subtitle={[
+                    a.clock_out ? `実働 ${workedLabel(a)}` : '',
+                    a.breaks?.length ? `中抜け ${fmtBreaks(a)}` : '',
+                    a.auto_in || a.auto_out ? '自動補完あり' : '',
+                  ].filter(Boolean).join('・') || undefined}
+                  trailing={savedAt === a.work_date
+                    ? <span role="status"><Badge tone="primary" icon="check">保存しました</Badge></span>
+                    : confirmed ? <Badge icon="check">確定</Badge> : undefined}
+                  expanded={open === a.id} onClick={() => setOpen(open === a.id ? null : a.id)}>
+                  {open === a.id && (
+                    <DayEditor a={a} confirmed={confirmed} onSave={(d) => saveDay(a, d)}
+                      onToggleConfirm={() => toggleConfirm(a)} onClose={() => setOpen(null)} />
                   )}
-                  </Fragment>
-                )
-              })}
-            </tbody>
-            <tfoot>
-              <tr className="pt-total">
-                <td colSpan={4}>{m}月 合計（{days.filter((d) => d.clock_out).length}日）</td>
-                <td className="pt-time">{asHm(days.filter((d) => d.clock_out).reduce((sum, d) => sum + workedMinutes(d), 0))}</td><td />
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
-      {err && <div className="notice warn">{err}</div>}
-    </div>
+                </ListRow>
+              )
+            })}
+          </List>
+        </Card>
+      ))}
+    </>
   )
 }
 
@@ -905,9 +863,6 @@ const yen = (n: number) => `¥${Math.round(n).toLocaleString('ja-JP')}`
 const hmm = (min: number) => `${Math.floor(min / 60)}:${String(Math.round(min % 60)).padStart(2, '0')}`
 
 /* ---------- 名簿 ---------- */
-// MyHood swatch palette（塗り専用。白文字が乗るので濃色寄りに調整）
-const AVATAR_COLORS = ['#007f66', '#2F8CFF', '#7c5cd6', '#0f8a7e', '#c2447e', '#c2691c']
-
 const BLANK_INVITE = { name: '', email: '', work_start: '09:00', work_end: '18:00' }
 
 function Members({ me }: { me: Member }) {
@@ -955,8 +910,10 @@ function Members({ me }: { me: Member }) {
     load()
   }
 
+  // 自分の権限は変えられない（一般にすると名簿が見えなくなり、自分では管理者に戻せないため）
   const changeRole = async (m: Member, role: Member['role']) => {
     setErr('')
+    if (m.id === me.id) return setErr('自分の権限は変更できません。ほかの管理者に変更してもらってください')
     const { error } = await supabase.from('members').update({ role }).eq('id', m.id)
     if (error) return setErr(error.message)
     load()
@@ -978,170 +935,147 @@ function Members({ me }: { me: Member }) {
 
   return (
     <>
-      <div className="card">
-        <h2>
-          メンバー名簿 <span className="tag">{members.length}名</span>
-          {isAdmin && !open && (
-            <button className="h2-action" onClick={() => setOpen(true)}>＋ 招待</button>
-          )}
-        </h2>
-        <div className="member-list">
-          {members.map((m, i) => {
+      {isAdmin && open && (
+        <Card title="メンバーを招待" icon="plus">
+          <form className="ui-stack" onSubmit={(e) => { e.preventDefault(); invite() }}>
+            <TextField label="名前" placeholder="山田 太郎" autoFocus required
+              value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <TextField label="メールアドレス" type="email" placeholder="you@example.com" required
+              value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            {err && <ErrorMessage>{err}</ErrorMessage>}
+            <Notice>
+              メールアドレスが分かっている人向けです。登録したアドレスでアカウントを作成すると自動で参加し、
+              ここで設定した名前が引き継がれます。アドレスが分からない場合は名簿の下にある参加コードを共有してください
+            </Notice>
+            <div className="ui-row">
+              <Button type="submit" disabled={!form.name || !form.email || busy}>{busy ? '登録中…' : '名簿に追加'}</Button>
+              <Button variant="outline" onClick={() => { setOpen(false); setErr('') }}>キャンセル</Button>
+            </div>
+          </form>
+        </Card>
+      )}
+
+      <Card title={`メンバー ${members.length}名`} icon="users"
+        action={isAdmin && !open && <Button variant="ghost" icon="plus" onClick={() => setOpen(true)}>招待</Button>}>
+        <List label="メンバー名簿">
+          {members.map((m) => {
             const monthly = m.contract_amount != null
             const amount = (monthly ? m.contract_amount : m.hourly_rate) ?? 0
             const opened = detail === m.id
             return (
-              <div key={m.id} className="member-row">
-                <div className="m-avatar member-av" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
-                  {m.name[0]}
-                </div>
-                <div className="m-info">
-                  <div className="m-name">
-                    {m.name}{m.id === me.id && <span className="you">あなた</span>}
-                  </div>
-                  <div className="m-mail">{m.email}</div>
-                  <div className="member-tags">
-                    {isAdmin ? (
-                      <select className={`role-select ${m.role === 'admin' ? 'is-admin' : ''}`} value={m.role}
-                        aria-label={`${m.name}の権限`}
-                        onChange={(e) => changeRole(m, e.target.value as Member['role'])}>
-                        <option value="member">一般</option>
-                        <option value="admin">管理者</option>
-                      </select>
-                    ) : (
-                      <span className="badge badge-gray">{m.role === 'admin' ? '管理者' : '一般'}</span>
-                    )}
-                    {m.status === 'invited' && <span className="badge badge-yellow">招待中・未参加</span>}
-                  </div>
-                </div>
-                <div className="m-pay">
-                  <span className="m-pay-kind">{monthly ? '月額' : '時給'}</span>
-                  <b className={`m-pay-amount ${amount > 0 ? '' : 'unset'}`}>{amount > 0 ? yen(amount) : '未設定'}</b>
-                  {isAdmin && (
-                    <button className="link-btn" aria-expanded={opened}
-                      onClick={() => setDetail(opened ? null : m.id)}>{opened ? '閉じる' : '詳細設定'}</button>
-                  )}
-                </div>
+              <ListRow key={m.id} leading={<Avatar name={m.name} seed={m.id} />}
+                title={<>{m.name} {m.id === me.id && <Badge tone="primary">あなた</Badge>}</>}
+                subtitle={<>{m.email}<br />{m.role === 'admin' ? '管理者' : '一般'}・{amount > 0 ? `${yen(amount)}/${monthly ? '月' : '時'}` : '給与未設定'}</>}
+                trailing={m.status === 'invited' ? <Badge icon="alert">招待中</Badge> : undefined}
+                expanded={isAdmin ? opened : undefined}
+                onClick={isAdmin ? () => setDetail(opened ? null : m.id) : undefined}>
                 {opened && (
-                  <div className="m-detail">
-                    <div className="m-detail-row">
-                      <span className="m-detail-label">給与形態</span>
-                      <div className="seg-row" role="group" aria-label={`${m.name}の給与形態`}>
-                        <button className={`preset-chip ${monthly ? '' : 'sel'}`} aria-pressed={!monthly}
-                          onClick={() => monthly && changePay(m, { contract_amount: null })}>時給</button>
-                        <button className={`preset-chip ${monthly ? 'sel' : ''}`} aria-pressed={monthly}
-                          onClick={() => !monthly && changePay(m, { contract_amount: 0 })}>月額</button>
-                      </div>
+                  <>
+                    <div className="ui-field">
+                      <span className="ui-field-label" aria-hidden="true">権限</span>
+                      {m.id === me.id ? (
+                        <p className="ui-text">
+                          {m.role === 'admin' ? '管理者' : '一般'}
+                          <span className="ui-secondary">（自分の権限は変えられません。変更はほかの管理者に依頼してください）</span>
+                        </p>
+                      ) : (
+                        <SegmentedControl label={`${m.name}の権限`} value={m.role} onChange={(r) => changeRole(m, r)}
+                          options={[{ key: 'member', label: '一般' }, { key: 'admin', label: '管理者' }]} />
+                      )}
                     </div>
-                    <div className="m-detail-row">
-                      <span className="m-detail-label">金額</span>
-                      <div className="m-yen">
-                        ¥
-                        <input type="text" inputMode="numeric" placeholder="0"
-                          aria-label={`${m.name}の${monthly ? '契約金額（月額）' : '時給'}`}
-                          value={amount || ''}
-                          onChange={(e) => {
-                            const v = Math.max(0, Number(e.target.value.replace(/[,¥\s]/g, '')) || 0)
-                            changePay(m, monthly ? { contract_amount: v } : { hourly_rate: v })
-                          }} />
-                        {monthly ? '/ 月' : '/ 時間'}
-                      </div>
+                    <div className="ui-field">
+                      <span className="ui-field-label" aria-hidden="true">給与形態</span>
+                      <SegmentedControl label={`${m.name}の給与形態`} value={monthly ? 'monthly' : 'hourly'}
+                        options={[{ key: 'hourly', label: '時給' }, { key: 'monthly', label: '月額' }]}
+                        onChange={(k) => changePay(m, k === 'monthly' ? { contract_amount: 0 } : { contract_amount: null })} />
                     </div>
+                    <TextField label={monthly ? '契約金額（月額）' : '時給'} inputMode="numeric" placeholder="0"
+                      hint={monthly ? '円 / 月' : '円 / 時間'} value={amount || ''}
+                      onChange={(e) => {
+                        const v = Math.max(0, Number(e.target.value.replace(/[,¥\s]/g, '')) || 0)
+                        changePay(m, monthly ? { contract_amount: v } : { hourly_rate: v })
+                      }} />
                     {m.id !== me.id && (
-                      <div className="m-detail-foot">
-                        <button className="m-delete" onClick={() => remove(m)}>このメンバーを削除</button>
-                      </div>
+                      <div><Button variant="ghost" danger onClick={() => remove(m)}>このメンバーを削除</Button></div>
                     )}
-                  </div>
+                  </>
                 )}
-              </div>
+              </ListRow>
             )
           })}
-        </div>
-        {err && !open && <div className="notice warn">{err}</div>}
+        </List>
+        {err && !open && <ErrorMessage>{err}</ErrorMessage>}
         {isAdmin && (
-          <div className="join-code-subtle">
-            参加コード <b>{code || '—'}</b>
-            <button onClick={copyCode}>{copied ? 'コピーしました' : 'コピー'}</button>
-            <span className="join-code-hint">共有すれば相手が自分でアカウントを作って参加できます</span>
+          <div className="ui-row between">
+            <div>
+              <p className="ui-secondary">参加コード</p>
+              <p className="ui-text ui-code">{code || '—'}</p>
+            </div>
+            <Button variant="outline" icon={copied ? 'check' : 'copy'} onClick={copyCode}>
+              {copied ? 'コピーしました' : 'コピー'}
+            </Button>
+            <p className="ui-secondary">共有すれば相手が自分でアカウントを作って参加できます</p>
           </div>
         )}
-      </div>
-
-      {isAdmin && open && (
-        <div className="card">
-          <h2>メンバーを招待</h2>
-          <label htmlFor="iv-name">名前</label>
-          <input id="iv-name" type="text" placeholder="山田 太郎" autoFocus
-            value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-
-          <label htmlFor="iv-mail">メールアドレス</label>
-          <input id="iv-mail" type="email" placeholder="you@example.com"
-            value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-
-          {err && <div className="notice warn">{err}</div>}
-          <div className="notice">
-            メールアドレスが分かっている人向けです。登録したアドレスでアカウントを作成すると自動で参加し、
-            ここで設定した名前が引き継がれます。
-            アドレスが分からない場合は名簿の下にある参加コードを共有してください
-          </div>
-          <div className="form-actions">
-            <button className="btn-primary" style={{ margin: 0 }}
-              disabled={!form.name || !form.email || busy} onClick={invite}>
-              {busy ? '登録中…' : '名簿に追加'}
-            </button>
-            <button className="btn-outline" onClick={() => { setOpen(false); setErr('') }}>キャンセル</button>
-          </div>
-        </div>
-      )}
+      </Card>
     </>
   )
 }
 
-/* ---------- プロフィール・設定 ---------- */
-function Profile({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
-  const [settingsOpen, setSettingsOpen] = useState(false)
+/* ---------- 会社名（管理者） ---------- */
+function CompanyCard({ company, onSaved }: { company: Company; onSaved: (c: Company) => void }) {
+  const [name, setName] = useState(company.name)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+
+  const save = async () => {
+    setErr(''); setMsg('')
+    const next = { name: name || company.name }
+    const { error } = await supabase.from('companies').update(next).eq('id', company.id)
+    if (error) return setErr('変更は管理者のみ可能です')
+    onSaved({ ...company, ...next })
+    setMsg('保存しました')
+  }
+
   return (
-    <>
-      <div className="card">
-        <button className="profile-head profile-head-btn" aria-expanded={settingsOpen}
-          title="連携・アカウント設定を開く" onClick={() => setSettingsOpen(!settingsOpen)}>
-          <div className="m-avatar profile-avatar">{me.name[0]}</div>
-          <div>
-            <div className="profile-name">{me.name}</div>
-            <div className="m-mail">{me.email}</div>
-            <div className="account-badges">
-              <span className="badge badge-gray">{me.role === 'admin' ? '管理者' : '一般'}</span>
-            </div>
-          </div>
-          <span className="profile-caret">{settingsOpen ? '▴' : '▾'}</span>
-        </button>
-      </div>
-      {settingsOpen && <AccountSettings me={me} onRename={onRename} />}
-    </>
+    <Card title="会社" icon="building">
+      <form className="ui-stack" onSubmit={(e) => { e.preventDefault(); save() }}>
+        <TextField label="会社名" value={name} onChange={(e) => setName(e.target.value)} />
+        {err && <ErrorMessage>{err}</ErrorMessage>}
+        {msg && <Notice icon="check">{msg}</Notice>}
+        <div><Button type="submit" variant="outline" disabled={!name || name === company.name}>保存</Button></div>
+      </form>
+    </Card>
   )
 }
 
-// 連携とアカウント設定（プロフィールの一番上をタップすると表示される）
-function AccountSettings({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
+/* ---------- 設定画面の中身: 表示（自動/ライト/ダーク）。値の保存と切り替えは theme.ts ---------- */
+function AppearanceCard() {
+  const [theme, setTheme] = useState(readTheme)
+  return (
+    <Card title="表示" icon="sun" className="plain">
+      <SegmentedControl label="表示" fullWidth value={theme} onChange={(t) => { applyTheme(t); setTheme(t) }}
+        options={[{ key: 'system', label: '自動', icon: 'monitor' }, { key: 'light', label: 'ライト', icon: 'sun' }, { key: 'dark', label: 'ダーク', icon: 'moon' }]} />
+      <p className="ui-secondary">「自動」は端末の設定に合わせて切り替わります。選んだ表示はこの端末にだけ保存されます</p>
+    </Card>
+  )
+}
+
+/* ---------- プロフィールの「アカウント」: 名前・パスワード ---------- */
+function AccountCard({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
+  // 誤って書き換えないよう、最初は値だけ。行をタップした時だけ入力欄を開く（iOS の設定と同じ）
+  const [editing, setEditing] = useState<'name' | 'password' | null>(null)
   const [name, setName] = useState(me.name)
   const [password, setPassword] = useState('')
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
-  const [providers, setProviders] = useState<string[]>([])
-  const [googleOk, setGoogleOk] = useState(false)
 
-  const loadIdentities = useCallback(async () => {
-    const { data } = await supabase.auth.getUserIdentities()
-    setProviders((data?.identities ?? []).map((i) => i.provider))
-  }, [])
-
-  useEffect(() => {
-    loadIdentities()
-    isProviderEnabled('google').then(setGoogleOk)
-  }, [loadIdentities])
-
-  const googleLinked = providers.includes('google')
+  const open = (key: 'name' | 'password') => {
+    setMsg(''); setErr('')
+    if (editing === key) return setEditing(null)
+    setName(me.name); setPassword('')
+    setEditing(key)
+  }
 
   const saveName = async () => {
     setErr(''); setMsg('')
@@ -1149,6 +1083,7 @@ function AccountSettings({ me, onRename }: { me: Member; onRename: (name: string
     const { error } = await supabase.from('members').update({ name }).eq('id', me.id)
     if (error) return setErr('名前を変更できませんでした')
     onRename(name)
+    setEditing(null)
     setMsg('名前を保存しました')
   }
 
@@ -1157,83 +1092,69 @@ function AccountSettings({ me, onRename }: { me: Member; onRename: (name: string
     const { error } = await supabase.auth.updateUser({ password })
     if (error) return setErr(authError(error.message))
     setPassword('')
+    setEditing(null)
     setMsg('パスワードを変更しました')
   }
 
-  const linkGoogle = async () => {
-    setErr('')
-    const { error } = await supabase.auth.linkIdentity({
-      provider: 'google', options: googleOAuthOptions,
-    })
-    if (error) setErr(authError(error.message))
-  }
-
-  const unlinkGoogle = async () => {
-    setErr(''); setMsg('')
-    const { data } = await supabase.auth.getUserIdentities()
-    const identity = data?.identities?.find((i) => i.provider === 'google')
-    if (!identity) return
-    const { error } = await supabase.auth.unlinkIdentity(identity)
-    if (error) return setErr(authError(error.message))
-    loadIdentities()
-    setMsg('Googleの連携を解除しました')
-  }
+  const actions = (canSave: boolean) => (
+    <div className="ui-row">
+      <Button type="submit" variant="outline" disabled={!canSave}>保存</Button>
+      <Button variant="ghost" onClick={() => setEditing(null)}>キャンセル</Button>
+    </div>
+  )
 
   return (
+    <Card title="アカウント" icon="user" className="plain">
+      <List label="アカウント">
+        <ListRow leading={<LeadingIcon name="user" tone="soft" />} title="名前" trailing={me.name} expanded={editing === 'name'} onClick={() => open('name')}>
+          {editing === 'name' && (
+            <form className="ui-stack" onSubmit={(e) => { e.preventDefault(); saveName() }}>
+              <TextField label="新しい名前" autoComplete="name" autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+              {actions(!!name && name !== me.name)}
+            </form>
+          )}
+        </ListRow>
+        <ListRow leading={<LeadingIcon name="lock" tone="soft" />} title="パスワード" trailing="変更する" expanded={editing === 'password'} onClick={() => open('password')}>
+          {editing === 'password' && (
+            <form className="ui-stack" onSubmit={(e) => { e.preventDefault(); changePassword() }}>
+              <TextField label="新しいパスワード" type="password" autoComplete="new-password" hint="8文字以上" autoFocus
+                value={password} onChange={(e) => setPassword(e.target.value)} />
+              {actions(password.length >= 8)}
+            </form>
+          )}
+        </ListRow>
+      </List>
+      {msg && <Notice icon="check">{msg}</Notice>}
+      {err && <ErrorMessage>{err}</ErrorMessage>}
+    </Card>
+  )
+}
+
+/* ---------- プロフィール（Apple Account と同じ役割）: 自分の情報、管理者はメンバーと会社も。ログアウトは設定。
+   設定（表示）への入口はスマホだけ右上の⚙︎（PC はサイドバーの「設定」） ---------- */
+function ProfilePage({ me, company, onRename, onCompanyChange, onOpenSettings }: {
+  me: Member; company: Company | null; onRename: (name: string) => void; onCompanyChange: (c: Company) => void; onOpenSettings: () => void
+}) {
+  return (
     <>
-      <div className="card">
-        <h2>外部サービス連携</h2>
-        <div className="link-row">
-          <div className="link-info">
-            <GoogleLogo />
-            <div>
-              <div className="link-title">Google アカウント</div>
-              <div className="link-desc">
-                {googleLinked ? '連携済み。Googleでログインできます'
-                  : googleOk ? '連携するとGoogleでログインできます'
-                  : 'Googleログインが未設定です。管理者にご確認ください'}
-              </div>
-            </div>
-          </div>
-          {googleLinked
-            ? <button className="btn-outline" onClick={unlinkGoogle}>解除</button>
-            : <button className="btn-primary" style={{ margin: 0 }} disabled={!googleOk} onClick={linkGoogle}>連携する</button>}
-        </div>
-      </div>
-
-      <div className="card">
-        <h2>アカウント設定</h2>
-        <label htmlFor="pf-name">名前</label>
-        <input id="pf-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
-        <button className="btn-primary" disabled={!name || name === me.name} onClick={saveName}>名前を保存</button>
-
-        <label htmlFor="pf-pw">新しいパスワード</label>
-        <input id="pf-pw" type="password" autoComplete="new-password" placeholder="8文字以上"
-          value={password} onChange={(e) => setPassword(e.target.value)} />
-        <button className="btn-primary" disabled={password.length < 8} onClick={changePassword}>
-          パスワードを変更
-        </button>
-
-        {msg && <div className="notice">{msg}</div>}
-        {err && <div className="notice warn">{err}</div>}
-        <button className="btn-logout" onClick={() => supabase.auth.signOut()}>ログアウト</button>
-      </div>
+      <Header title="プロフィール" actions={<IconButton icon="gear" label="設定" className="ui-mobile-only" onClick={onOpenSettings} />} />
+      <main className="ui-page">
+        <section className="ui-hero" aria-label="あなた">
+          <Avatar name={me.name} seed={me.id} size="lg" />
+          <p className="ui-title">{me.name}</p>
+          <span className="ui-secondary">{me.email}</span>
+          <Badge icon={me.role === 'admin' ? 'building' : 'user'}>{me.role === 'admin' ? '管理者' : '一般'}</Badge>
+        </section>
+        <AccountCard me={me} onRename={onRename} />
+        {me.role === 'admin' && <Members me={me} />}
+        {me.role === 'admin' && company && <CompanyCard company={company} onSaved={onCompanyChange} />}
+      </main>
     </>
   )
 }
 
-/* ---------- プロフィールタブ（自分／管理者はメンバー管理も） ---------- */
-function ProfilePage({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
-  return (
-    <div className="flat">
-      <Profile me={me} onRename={onRename} />
-      {me.role === 'admin' && <Members me={me} />}
-    </div>
-  )
-}
-
 /* ---------- 管理者はタイムカードの上でメンバーを切り替えて見る ---------- */
-function MemberSwitch({ me, children }: { me: Member; children: (m: Member) => React.ReactNode }) {
+function MemberSwitch({ me, children }: { me: Member; children: (m: Member) => ReactNode }) {
   const [members, setMembers] = useState<Member[]>([])
   const [id, setId] = useState(me.id)
   useEffect(() => {
@@ -1245,102 +1166,94 @@ function MemberSwitch({ me, children }: { me: Member; children: (m: Member) => R
   return (
     <>
       {me.role === 'admin' && members.length > 1 && (
-        <label className="member-switch">
-          表示中のメンバー
-          <select value={member.id} onChange={(e) => setId(e.target.value)}>
-            {members.map((m) => <option key={m.id} value={m.id}>{m.id === me.id ? `${m.name}（自分）` : m.name}</option>)}
-          </select>
-        </label>
+        <SelectField label="表示中のメンバー" value={member.id} onChange={(e) => setId(e.target.value)}>
+          {members.map((m) => <option key={m.id} value={m.id}>{m.id === me.id ? `${m.name}（自分）` : m.name}</option>)}
+        </SelectField>
       )}
       <Fragment key={member.id}>{children(member)}</Fragment>
     </>
   )
 }
 
-/* ---------- App ---------- */
-const ICONS: Record<Tab, React.ReactNode> = {
-  home: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 10.5 12 3l9 7.5" /><path d="M5 9.5V21h14V9.5" />
-    </svg>
-  ),
-  timecard: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
-    </svg>
-  ),
-  profile: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" />
-    </svg>
-  ),
-}
-
-// 管理者のメンバー管理はプロフィール内
-const tabsFor = (_role: Member['role']): { key: Tab; label: string }[] => [
-  { key: 'home', label: 'ホーム' },
-  { key: 'timecard', label: 'タイムカード' },
-  { key: 'profile', label: 'プロフィール' },
+/* ---------- 画面の切り替え。同じ画面への入口は PC・スマホそれぞれ1つだけ
+   スマホ: 下のタブ（ホーム/タイムカード/プロフィール）。設定はプロフィール右上の⚙︎から
+   PC: 左のサイドバー（ホーム/タイムカード/プロフィール/設定）。左下のアカウントからもプロフィールへ ---------- */
+const TABS: TabItem<Tab>[] = [
+  { key: 'home', label: 'ホーム', icon: 'home' },
+  { key: 'timecard', label: 'タイムカード', icon: 'clock' },
+  { key: 'profile', label: 'プロフィール', icon: 'user' },
 ]
+const SIDEBAR: TabItem<Tab>[] = [...TABS, { key: 'settings', label: '設定', icon: 'gear' }]
 
-/* ---------- デモ（/demo・データはインメモリ） ---------- */
-function DemoApp() {
+function Screens({ me, company, onRename, onCompanyChange }: {
+  me: Member; company: Company | null; onRename: (name: string) => void; onCompanyChange: (c: Company) => void
+}) {
   const [tab, setTab] = useState<Tab>('home')
-  const switchable = DEMO_MEMBERS.filter((m) => m.status === 'active')
-  const [me, setMe] = useState(switchable[0])
-  const [open, setOpen] = useState(false)
-
-  const pick = (m: Member) => { setMe(m); setTab('home'); setOpen(false) }
-
+  const go = (t: Tab) => { setTab(t); scrollTo(0, 0) } // 移った先の画面は上から
+  // サイドバーの上はアプリ（DayDeed）、ホームの題名は会社名。同じものを2か所に出さない
+  const app = <><DayDeedLogo size={28} />DayDeed</>
   return (
-    <div className="app">
-      <button className="demo-fab" onClick={() => setOpen(!open)}>
-        デモ画面 · {me.name}（{me.role === 'admin' ? '管理者' : '従業員'}）{open ? ' ▴' : ' ▾'}
-      </button>
-      {open && (
-        <div className="demo-bar">
-          {switchable.map((m, i) => (
-            <button key={m.id} className={`demo-user ${m.id === me.id ? 'sel' : ''}`} onClick={() => pick(m)}>
-              <span className="m-avatar" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>{m.name[0]}</span>
-              {m.name}（{m.role === 'admin' ? '管理者' : '従業員'}）
-            </button>
-          ))}
-          <a href="/" style={{ marginLeft: 'auto', fontSize: 12 }}>ログイン画面へ</a>
-        </div>
-      )}
-      <header className="header">
-        <button className="brand" onClick={() => setTab('home')}>
-          <span className="brand-mark">🌻</span>ひまわり事務機
-        </button>
-        <button className={`avatar ${tab === 'profile' ? 'sel' : ''}`} title="プロフィール・設定"
-          onClick={() => setTab('profile')}>
-          {me.name[0]}
-        </button>
-      </header>
-      {/* keyで切り替え時に各画面を作り直し、前のユーザーのデータを残さない */}
-      {tab === 'home' && <Home key={me.id} me={me} />}
-      {tab === 'timecard' && <MemberSwitch key={me.id} me={me}>{(m) => <KintaiTable me={m} />}</MemberSwitch>}
-      {tab === 'profile' && <ProfilePage key={me.id} me={me} onRename={(name) => setMe({ ...me, name })} />}
-      <nav className="tabbar">
-        {tabsFor(me.role).map((t) => (
-          <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => setTab(t.key)}>
-            <span className="icon">{ICONS[t.key]}</span>{t.label}
-          </button>
-        ))}
-      </nav>
+    <div className="ui-shell">
+      <Sidebar brand={app} items={SIDEBAR} value={tab} onChange={go}
+        user={{ name: me.name, seed: me.id, sub: me.role === 'admin' ? '管理者' : '一般' }} onUser={() => go('profile')} />
+      <div className="ui-shell-main">
+        {tab === 'home' && <Home me={me} title={company?.name ?? 'DayDeed'} />}
+        {tab === 'timecard' && (
+          <>
+            <Header title="タイムカード" />
+            <main className="ui-page"><MemberSwitch me={me}>{(m) => <KintaiTable me={m} />}</MemberSwitch></main>
+          </>
+        )}
+        {tab === 'profile' && <ProfilePage me={me} company={company} onRename={onRename} onCompanyChange={onCompanyChange} onOpenSettings={() => go('settings')} />}
+        {tab === 'settings' && (
+          <>
+            <Header title="設定" onBack={() => go('profile')} backLabel="プロフィール" className="back-mobile-only" />
+            <main className="ui-page">
+              <AppearanceCard />
+              <Card title="アカウント" icon="user" className="plain">
+                <List label="アカウント">
+                  <ListRow leading={<LeadingIcon name="mail" tone="muted" />} title="メールアドレス" trailing={me.email} />
+                </List>
+              </Card>
+              <Button variant="outline" danger fullWidth icon="power" onClick={() => supabase.auth.signOut()}>ログアウト</Button>
+            </main>
+          </>
+        )}
+      </div>
+      {/* スマホの設定はプロフィールの中の画面なので、タブはプロフィールを選択中にする */}
+      <TabBar items={TABS} value={tab === 'settings' ? 'profile' : tab} onChange={go} />
     </div>
   )
 }
 
+/* ---------- デモ（/demo・データはインメモリ） ---------- */
+function DemoApp() {
+  const switchable = DEMO_MEMBERS.filter((m) => m.status === 'active')
+  const [me, setMe] = useState(switchable[0])
+  const [company, setCompany] = useState<Company>({ id: 'c1', name: 'ひまわり事務機', icon: '🌻' })
+  return (
+    <>
+      <div className="ui-page top">
+        <div className="ui-row between">
+          <span className="ui-secondary">デモ画面です（データは保存されません）</span>
+          <a className="ui-secondary" href="/">ログイン画面へ</a>
+        </div>
+        <SelectField label="表示するユーザー" value={me.id} onChange={(e) => setMe(switchable.find((m) => m.id === e.target.value) ?? me)}>
+          {switchable.map((m) => <option key={m.id} value={m.id}>{m.name}（{m.role === 'admin' ? '管理者' : '従業員'}）</option>)}
+        </SelectField>
+      </div>
+      {/* keyで切り替え時に各画面を作り直し、前のユーザーのデータを残さない */}
+      <Screens key={me.id} me={me} company={company} onRename={(name) => setMe({ ...me, name })} onCompanyChange={setCompany} />
+    </>
+  )
+}
+
 function App() {
-  const [tab, setTab] = useState<Tab>('home')
   const [session, setSession] = useState<Session | null>(null)
   const [me, setMe] = useState<Member | null>(null)
-  const [company, setCompany] = useState<{ id: string; name: string; icon: string } | null>(null)
+  const [company, setCompany] = useState<Company | null>(null)
   const [loading, setLoading] = useState(true)
   const [recovering, setRecovering] = useState(false)
-  // ponytail: 経費管理は削除済み。ヘッダーの経費ボタンは別PRで外すまでsetterだけ残す（押しても何も起きない）
-  const [, setMoneyMode] = useState(false)
 
   const loadMe = useCallback(async (s: Session | null) => {
     if (!s) { setMe(null); setCompany(null); setLoading(false); return }
@@ -1359,19 +1272,6 @@ function App() {
     setLoading(false)
   }, [])
 
-  const editBrand = async () => {
-    if (!company) return
-    const name = prompt('会社名', company.name)
-    if (name === null) return
-    const icon = prompt('アイコン（絵文字か1文字）', company.icon)
-    if (icon === null) return
-    const { error } = await supabase.from('companies')
-      .update({ name: name || company.name, icon: (icon || company.icon).slice(0, 2) })
-      .eq('id', company.id)
-    if (error) alert('変更は管理者のみ可能です')
-    else setCompany({ ...company, name: name || company.name, icon: (icon || company.icon).slice(0, 2) })
-  }
-
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session)
@@ -1385,57 +1285,11 @@ function App() {
     return () => sub.subscription.unsubscribe()
   }, [loadMe])
 
-  return (
-    <div className="app">
-      <header className="header" style={{ visibility: me ? 'visible' : 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <button className="brand" onClick={() => setTab('home')}>
-            {company?.icon ? <span className="brand-mark">{company.icon}</span> : <DayDeedLogo />}
-            {company?.name ?? 'DayDeed'}
-          </button>
-          {me?.role === 'admin' && company && (
-            <button className="brand-edit" title="会社名・アイコンを変更" onClick={editBrand}>✎</button>
-          )}
-        </div>
-        {me && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button className="icon-btn money-icon-btn" title="経費管理" aria-label="経費管理"
-              onClick={() => setMoneyMode(true)}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M8.5 7.5 12 12l3.5-4.5M12 12v5M9.5 13.5h5M9.5 16h5" />
-              </svg>
-            </button>
-            <button className={`avatar ${tab === 'profile' ? 'sel' : ''}`} title="プロフィール・設定"
-              onClick={() => setTab('profile')}>
-              {me.name[0]}
-            </button>
-          </div>
-        )}
-      </header>
-
-      {loading ? <div className="empty">読み込み中…</div>
-        : recovering ? <NewPassword onDone={() => setRecovering(false)} />
-        : !session ? <Auth />
-        : !me ? <Onboarding email={session.user.email ?? ''} onDone={() => loadMe(session)} />
-        : (
-          <>
-            {tab === 'home' && <Home key={me.id} me={me} />}
-            {tab === 'timecard' && <MemberSwitch me={me}>{(m) => <KintaiTable me={m} />}</MemberSwitch>}
-            {tab === 'profile' && (
-              <ProfilePage me={me} onRename={(name) => setMe({ ...me, name })} />
-            )}
-            <nav className="tabbar">
-              {tabsFor(me.role).map((t) => (
-                <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => setTab(t.key)}>
-                  <span className="icon">{ICONS[t.key]}</span>{t.label}
-                </button>
-              ))}
-            </nav>
-          </>
-        )}
-    </div>
-  )
+  if (loading) return <main className="ui-page"><p className="ui-secondary ui-center" role="status">読み込み中…</p></main>
+  if (recovering) return <NewPassword onDone={() => setRecovering(false)} />
+  if (!session) return <Auth />
+  if (!me) return <Onboarding email={session.user.email ?? ''} onDone={() => loadMe(session)} />
+  return <Screens me={me} company={company} onRename={(name) => setMe({ ...me, name })} onCompanyChange={setCompany} />
 }
 
 // /demo ではフックの実行を分岐させないよう、コンポーネントごと差し替える

@@ -1,31 +1,61 @@
 /* 共通部品の見た目（規定: docs/デザイン規定.md / 一覧: /catalog）
-   値は tokens.css だけを参照する。寸法は MyHood の同名部品（PrimaryButton / BaseCard / Input / Badge /
-   ErrorMessage / PageHeader / HeaderIconButton / TabBar）と同じ。
-   app.css は @layer legacy に入れてあるので、レイヤー外のここが常に勝つ */
+   形は Apple（iOS 26 のマップ・設定）を手本にする。値は tokens.css だけを参照する。
+   - まとまりは枠や影ではなく「大きな見出し・アイコン・余白・地とセルの明るさの差」で分ける
+   - 分かりやすい所にはアイコンを付ける
+   - ボタンは押しやすさ優先（大きなタイル・カプセル） */
 
-.ui-root {
-  color-scheme: light dark; /* ponytail: 移行中は新しい画面だけ。旧画面を消し終えたら :root へ移す */
-  min-height: 100dvh;
-  background: var(--md-sys-color-surface);
+/* 端末のライト/ダークに従う。data-theme で固定できる（設定の「表示」・カタログ） */
+:root { color-scheme: light dark; }
+[data-theme="light"] { color-scheme: light; }
+[data-theme="dark"] { color-scheme: dark; }
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--ios-grouped-bg);
   color: var(--md-sys-color-on-surface);
   font: 400 var(--text-base)/var(--leading-relaxed) var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent; /* 押した時の見せ方は .ui-state の重ね色に任せる */
 }
-.ui-root[data-theme="light"] { color-scheme: light; }
-.ui-root[data-theme="dark"] { color-scheme: dark; }
-.ui-root, .ui-root *, .ui-root *::before, .ui-root *::after { box-sizing: border-box; }
-.ui-root :focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
-
-/* 画面の器: 下部タブに隠れないよう下を空ける */
-.ui-page {
-  display: grid; gap: var(--space-4);
-  max-width: 720px; margin: 0 auto;
-  padding: var(--space-4) var(--space-4) calc(100px + env(safe-area-inset-bottom));
-}
-
+:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
+a { color: var(--md-sys-color-primary); }
+/* data-theme を付けた範囲の地（カタログ）。color-scheme が変わるので面を塗り直す */
+.ui-root { min-height: 100dvh; background: var(--ios-grouped-bg); color: var(--md-sys-color-on-surface); }
 .ui-icon { width: 24px; height: 24px; flex: none; }
 
-/* 押す・なぞるは新しい色を作らず、文字色を重ねる（M3 の state layer。8% / 10%） */
+/* ===== 画面の器・並べ方・文字 ===== */
+/* セクションの間は広めに空けて区切る。下は浮いたタブバーとホームバーの分を空ける */
+.ui-page {
+  display: grid; gap: var(--space-7); align-content: start;
+  max-width: 720px; margin: 0 auto;
+  padding: var(--space-4) max(var(--space-4), env(safe-area-inset-right)) calc(110px + env(safe-area-inset-bottom)) max(var(--space-4), env(safe-area-inset-left));
+}
+.ui-page.narrow { max-width: 440px; padding-top: var(--space-6); }
+.ui-page.top { padding-bottom: 0; gap: var(--space-2); }
+
+.ui-stack { display: grid; gap: var(--space-4); }
+.ui-stack.tight { gap: var(--space-2); }
+.ui-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.ui-row.nowrap { flex-wrap: nowrap; }
+.ui-row.between { justify-content: space-between; }
+.ui-row.center, .ui-center { justify-content: center; text-align: center; }
+.ui-row > .ui-field { flex: 1 1 140px; }
+.ui-push { margin-left: auto; }
+.ui-text { margin: 0; }
+.ui-secondary { margin: 0; font-size: var(--text-sm); line-height: 1.45; color: var(--md-sys-color-on-surface-variant); }
+.ui-num { font-variant-numeric: tabular-nums; }
+.ui-title { margin: 0; font: 700 var(--text-2xl)/var(--leading-tight) var(--font-sans); }
+.ui-code { font: 700 var(--text-xl)/1.3 var(--font-sans); letter-spacing: .15em; font-variant-numeric: tabular-nums; }
+/* 時計など、画面の主役になる数字 */
+.ui-display {
+  margin: 0; font: 700 var(--text-display)/1.05 var(--font-sans);
+  letter-spacing: -0.03em; font-variant-numeric: tabular-nums;
+}
+.ui-display small { font-size: var(--text-lg); font-weight: 600; letter-spacing: 0; color: var(--md-sys-color-on-surface-variant); }
+/* 画面のてっぺん（マップの店名の段）: 中央ぞろえで主役の情報を置く */
+.ui-hero { display: grid; justify-items: center; gap: var(--space-2); text-align: center; padding-top: var(--space-2); }
+
+/* 押す・なぞるは新しい色を作らず、文字色を重ねる（8% / 10%） */
 .ui-state {
   --_layer: transparent; /* 親の重ね色を引き継がない */
   background-image: linear-gradient(var(--_layer), var(--_layer));
@@ -39,37 +69,45 @@
   --_layer: color-mix(in srgb, currentColor calc(var(--md-sys-state-pressed-state-layer-opacity) * 100%), transparent);
 }
 
-/* --- ボタン（MyHood PrimaryButton: px-6 py-3 rounded-2xl font-medium） --- */
+/* ===== ボタン ===== */
+/* iOS のボタン: 塗り（primary）/ 淡い塗り（outline）/ 文字だけ（ghost）。枠線と影は使わない。形はカプセル */
 .ui-btn {
   --_c: var(--md-sys-color-primary);
   --_on: var(--md-sys-color-on-primary);
   display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
   min-height: var(--tap-min);
-  padding: var(--space-3) var(--space-6);
-  border: 1px solid transparent; border-radius: var(--radius-2xl);
-  font: 500 var(--text-base)/1.5 var(--font-sans);
+  padding: var(--space-3) var(--space-5);
+  border: none; border-radius: var(--radius-full);
+  font: 600 var(--text-base)/1.4 var(--font-sans);
   cursor: pointer;
   transition: transform var(--dur-short) var(--ease-standard);
 }
 .ui-btn.danger { --_c: var(--md-sys-color-error); --_on: var(--md-sys-color-on-error); }
-.ui-btn:active:not(:disabled) { transform: scale(.98); }
-.ui-btn:disabled { opacity: .5; cursor: not-allowed; }
+.ui-btn:active:not(:disabled) { transform: scale(.97); }
+.ui-btn:disabled { opacity: .45; cursor: not-allowed; }
 .ui-btn .ui-icon { width: 20px; height: 20px; }
-.ui-btn-primary { background-color: var(--_c); color: var(--_on); box-shadow: var(--shadow-md); }
-.ui-btn-outline { background-color: transparent; color: var(--_c); border-color: color-mix(in oklab, var(--_c) 30%, transparent); }
-.ui-btn-ghost { background-color: transparent; color: var(--md-sys-color-on-surface); }
-.ui-btn-ghost.danger { color: var(--_c); }
+.ui-btn-primary { background-color: var(--_c); color: var(--_on); }
+.ui-btn-outline { background-color: color-mix(in oklab, var(--_c) 14%, transparent); color: var(--_c); }
+.ui-btn-ghost { background-color: transparent; color: var(--_c); padding-inline: var(--space-3); }
 .ui-btn-full { width: 100%; }
+/* タイル（マップの「経路・発信・Web」）: アイコンの下に文字。大きく押しやすい */
+.ui-btn.tile {
+  flex-direction: column; gap: var(--space-1);
+  min-height: 76px; padding: var(--space-3) var(--space-2);
+  border-radius: var(--radius-3xl);
+}
+.ui-btn.tile .ui-icon { width: 26px; height: 26px; }
+.ui-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); grid-auto-flow: column; gap: var(--space-2); }
 
-/* --- アイコンボタン（MyHood HeaderIconButton: 白い丸 + 影） --- */
+/* アイコンボタン: ガラスの丸（マップの共有・閉じる）。plain は表や行の中で使う透明版 */
 .ui-icon-btn {
   position: relative; display: inline-grid; place-items: center; flex: none;
   width: var(--tap-min); height: var(--tap-min); padding: 0;
-  border: none; border-radius: var(--radius-full);
-  background-color: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);
-  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--radius-full);
+  background-color: var(--ios-cell); color: var(--md-sys-color-on-surface);
   cursor: pointer;
 }
+.ui-icon-btn.plain { border-color: transparent; background-color: transparent; color: var(--md-sys-color-on-surface-variant); }
 .ui-icon-btn-badge {
   position: absolute; top: -2px; right: -2px;
   min-width: 18px; height: 18px; padding: 0 var(--space-1);
@@ -78,48 +116,117 @@
   font: 700 var(--text-2xs)/18px var(--font-sans);
 }
 
-/* --- ヘッダー（MyHood PageHeader: 地 95% + ぼかし、行の高さ 52px） --- */
+/* ===== ヘッダー（iOS の大きなタイトル）===== */
 .ui-header {
   position: sticky; top: 0; z-index: 20;
-  display: flex; align-items: center; gap: var(--space-2);
-  height: calc(52px + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) var(--space-3) 0;
-  background: color-mix(in oklab, var(--md-sys-color-surface) 95%, transparent);
-  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  display: flex; align-items: center; gap: var(--space-3);
+  min-height: calc(64px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) max(var(--space-4), env(safe-area-inset-right)) 0 max(var(--space-4), env(safe-area-inset-left));
+  background: color-mix(in oklab, var(--ios-grouped-bg) 85%, transparent);
+  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
 }
 .ui-header-title {
   flex: 1; min-width: 0; margin: 0;
-  font: 700 var(--text-base)/1.5 var(--font-sans);
+  display: flex; align-items: center; gap: var(--space-2);
+  font: 700 var(--text-2xl)/1.2 var(--font-sans);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ui-header-actions { display: flex; gap: var(--space-2); }
+.ui-header-actions:empty { display: none; }
+/* 戻るボタン: ガラスの丸に太い ‹（目立つよう地より明るい面と線） */
+.ui-header-back .ui-icon { width: 26px; height: 26px; stroke-width: 2.6; margin-left: -2px; }
 
-/* --- カード（MyHood BaseCard: rounded-2xl + 淡い枠 + 影 + 下へ薄くなる面。内側は p-5） --- */
-.ui-card {
-  padding: var(--space-5);
-  border: 1px solid color-mix(in oklab, var(--md-sys-color-outline) 40%, transparent);
-  border-radius: var(--radius-2xl);
-  background: linear-gradient(var(--md-sys-color-surface),
-    color-mix(in oklab, var(--md-sys-color-surface-container) 40%, var(--md-sys-color-surface)));
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
+/* ===== セクションとカード ===== */
+/* 見出し（大きく太い）をセルの外に置く。マップの「履歴 ›」 */
+.ui-section { display: grid; gap: var(--space-3); min-width: 0; }
+.ui-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 32px; padding-inline: var(--space-1); }
+.ui-section-title {
+  margin: 0; display: flex; align-items: center; gap: var(--space-2);
+  font: 700 var(--text-xl)/1.3 var(--font-sans);
 }
-.ui-card-head {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
-  margin-bottom: var(--space-3);
-}
-.ui-card-title { margin: 0; font: 500 var(--text-lg)/var(--leading-tight) var(--font-sans); }
+.ui-section-title .ui-icon { width: 22px; height: 22px; color: var(--md-sys-color-primary); }
+/* セル: 地より明るい角丸の面。枠・影なし */
+.ui-card { padding: var(--space-5); border-radius: var(--radius-3xl); background: var(--ios-cell); overflow: hidden; }
+.ui-card > * + * { margin-top: var(--space-4); }
+/* plain: セルなし（見出しと中身だけを地に直接置く） */
+.ui-section.plain > .ui-card { padding: 0; border-radius: 0; background: none; overflow: visible; }
 
-/* --- 入力欄（MyHood Input / Textarea: M3 の outlined text field） --- */
+/* ===== リスト（マップの履歴: 丸いアイコン + 太い題名 + グレーの補足） ===== */
+.ui-list { margin: 0; padding: 0; list-style: none; overflow: hidden; border-radius: var(--radius-3xl); background: var(--ios-cell); }
+/* 行の間の線。アイコン付きの行はアイコンの右から引く（iOS と同じ） */
+.ui-list > li { --_inset: var(--space-4); position: relative; }
+.ui-list > li:has(> .ui-list-row > :is(.ui-leading, .ui-avatar, .ui-date)) { --_inset: calc(var(--space-4) + 40px + var(--space-3)); }
+.ui-list > li + li::before { content: ""; position: absolute; top: 0; left: var(--_inset); right: 0; height: 1px; background: var(--md-sys-color-outline-variant); }
+.ui-list-row {
+  display: flex; align-items: center; gap: var(--space-3);
+  width: 100%; min-height: 56px; padding: var(--space-3) var(--space-4);
+  border: none; background-color: transparent; color: inherit;
+  font: 400 var(--text-base)/1.4 var(--font-sans); text-align: left;
+}
+button.ui-list-row { cursor: pointer; }
+.ui-list-row.primary { color: var(--md-sys-color-primary); font-weight: 600; }
+.ui-list-row.error { color: var(--md-sys-color-error); font-weight: 600; }
+.ui-list-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.ui-list-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ui-list-text:has(.ui-list-sub) .ui-list-title { font-weight: 600; }
+.ui-list-sub { font-size: var(--text-sm); color: var(--md-sys-color-on-surface-variant); overflow-wrap: break-word; }
+.ui-list-trailing {
+  min-width: 0; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--space-2);
+  color: var(--md-sys-color-on-surface-variant); text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+}
+/* 補足のない1行の行は、項目名を縮めず値の側を縮める */
+.ui-list-row:not(:has(.ui-list-sub)) .ui-list-text { flex: none; }
+.ui-list-row:not(:has(.ui-list-sub)) .ui-list-trailing { flex: 1; }
+.ui-list-chevron { display: grid; color: var(--md-sys-color-on-surface-variant); transition: transform var(--dur-short) var(--ease-standard); }
+.ui-list-chevron .ui-icon { width: 20px; height: 20px; }
+[aria-expanded="true"] > .ui-list-chevron { transform: rotate(90deg); }
+.ui-list-detail { display: grid; gap: var(--space-4); padding: 0 var(--space-4) var(--space-4); }
+/* セルの直下のリストは縁まで広げる */
+.ui-card > .ui-list { margin-inline: calc(var(--space-5) * -1); border-radius: 0; background: transparent; }
+.ui-card > .ui-list:first-child { margin-top: calc(var(--space-5) * -1); }
+.ui-card > .ui-list:last-child { margin-bottom: calc(var(--space-5) * -1); }
+.ui-card > .ui-list .ui-list-row, .ui-card > .ui-list .ui-list-detail { padding-inline: var(--space-5); }
+.ui-card > .ui-list > li { --_inset: var(--space-5); }
+.ui-card > .ui-list > li:has(> .ui-list-row > :is(.ui-leading, .ui-avatar, .ui-date)) { --_inset: calc(var(--space-5) + 40px + var(--space-3)); }
+/* セルなし（plain）のセクションでは、リストそのものを明るい角丸のセルにする */
+.ui-section.plain > .ui-card > .ui-list { margin: 0; border-radius: var(--radius-3xl); background: var(--ios-cell); }
+.ui-section.plain > .ui-card > .ui-list :is(.ui-list-row, .ui-list-detail) { padding-inline: var(--space-4); }
+.ui-section.plain > .ui-card > .ui-list > li { --_inset: var(--space-4); }
+.ui-section.plain > .ui-card > .ui-list > li:has(> .ui-list-row > :is(.ui-leading, .ui-avatar, .ui-date)) { --_inset: calc(var(--space-4) + 40px + var(--space-3)); }
+
+/* 行の頭の丸いアイコン（マップの履歴の黄色い丸） */
+.ui-leading {
+  display: inline-grid; place-items: center; flex: none;
+  width: 40px; height: 40px; border-radius: var(--radius-full);
+  background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary);
+}
+.ui-leading.soft { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.ui-leading.muted { background: var(--ios-fill); color: var(--md-sys-color-on-surface-variant); }
+.ui-leading .ui-icon { width: 22px; height: 22px; }
+
+/* ===== 数字の要約（マップの「営業時間・評価・距離」: 小さいラベルの下に大きな値。箱なし） ===== */
+.ui-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: var(--space-2); margin: 0; }
+.ui-stat { min-width: 0; padding: var(--space-2) var(--space-1); border-radius: var(--radius-2xl); text-align: center; }
+.ui-stat dt { display: flex; justify-content: center; align-items: center; gap: var(--space-1); font-size: var(--text-sm); color: var(--md-sys-color-on-surface-variant); }
+.ui-stat dt .ui-icon { width: 16px; height: 16px; }
+.ui-stat dd { margin: 0; font: 700 var(--text-xl)/1.3 var(--font-sans); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ui-stat[aria-current] { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+.ui-stat[aria-current] dt { color: inherit; }
+/* 列を固定した時（週の7日など）は小さく詰める */
+.ui-stats.fixed { gap: var(--space-1); }
+.ui-stats.fixed .ui-stat { padding: var(--space-2) 0; }
+.ui-stats.fixed dd { font-size: var(--text-xs); font-weight: 600; }
+
+/* ===== 入力欄（iOS: 枠なしのグレーの塗り。ラベルは上に小さく） ===== */
 .ui-field { display: grid; gap: var(--space-2); }
-.ui-field-label { font: 500 var(--text-sm)/1.45 var(--font-sans); color: var(--md-sys-color-on-surface); }
+.ui-field-label { font: 400 var(--text-sm)/1.45 var(--font-sans); color: var(--md-sys-color-on-surface-variant); }
 .ui-field-required { color: var(--md-sys-color-error); }
 .ui-field-hint { margin: 0; font-size: var(--text-sm); line-height: 1.45; color: var(--md-sys-color-on-surface-variant); }
 .ui-input {
   width: 100%; min-height: var(--tap-min);
-  padding: var(--space-3);
-  border: 1px solid var(--md-sys-color-outline); border-radius: var(--radius-xl);
-  background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid transparent; border-radius: var(--radius-xl);
+  background: var(--ios-fill); color: var(--md-sys-color-on-surface);
   font: 400 var(--text-input)/1.5 var(--font-sans);
 }
 .ui-input::placeholder { color: var(--md-sys-color-on-surface-variant); }
@@ -129,33 +236,83 @@
 .ui-input[aria-invalid="true"]:focus { outline-color: var(--md-sys-color-error); }
 .ui-input:disabled { opacity: .5; cursor: not-allowed; }
 textarea.ui-input { min-height: 120px; resize: vertical; line-height: var(--leading-relaxed); }
+/* 選択欄: 矢印は端末ごとに違うので › を下向きにして重ねる */
+.ui-select-wrap { position: relative; display: grid; }
+.ui-select { appearance: none; cursor: pointer; padding-right: calc(var(--space-3) + 28px); }
+.ui-select-wrap > .ui-icon {
+  position: absolute; right: var(--space-3); top: 50%; translate: 0 -50%; rotate: 90deg;
+  width: 18px; height: 18px; pointer-events: none; color: var(--md-sys-color-on-surface-variant);
+}
 
-/* --- エラー表示（MyHood ErrorMessage: エラー色 5% の面 + 20% の枠 + アイコン） --- */
+/* ===== セグメント（マップの移動手段の切り替え: カプセルの中に白い丸） ===== */
+.ui-seg { display: inline-flex; gap: 2px; padding: 4px; border-radius: var(--radius-full); background: var(--ios-fill); }
+.ui-seg.full { display: flex; }
+.ui-seg.full button { flex: 1; }
+.ui-seg button {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  min-width: 80px; min-height: calc(var(--tap-min) - 4px); padding: 0 var(--space-4);
+  border: none; border-radius: var(--radius-full);
+  background-color: transparent; color: var(--md-sys-color-on-surface-variant);
+  font: 600 var(--text-sm)/1 var(--font-sans); cursor: pointer;
+}
+.ui-seg button .ui-icon { width: 18px; height: 18px; }
+.ui-seg button[aria-pressed="true"] {
+  background-color: var(--glass-tabbar-active-bg);
+  color: var(--md-sys-color-on-surface);
+  box-shadow: var(--glass-tabbar-active-shadow);
+}
+
+/* ===== 知らせ・エラー・区切り・バッジ・アバター ===== */
+.ui-notice {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-2xl);
+  background: color-mix(in oklab, var(--md-sys-color-primary) 8%, var(--ios-cell));
+  font: 400 var(--text-sm)/1.45 var(--font-sans);
+}
+.ui-notice .ui-icon { width: 18px; height: 18px; margin-top: 2px; color: var(--md-sys-color-primary); }
 .ui-error {
   display: flex; align-items: flex-start; gap: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid color-mix(in oklab, var(--md-sys-color-error) 20%, transparent);
-  border-radius: var(--radius-xl);
-  background: color-mix(in oklab, var(--md-sys-color-error) 5%, transparent);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-2xl);
+  background: color-mix(in oklab, var(--md-sys-color-error) 10%, var(--ios-cell));
   color: var(--md-sys-color-error);
   font: 400 var(--text-sm)/1.45 var(--font-sans);
 }
-.ui-error .ui-icon { width: 17px; height: 17px; margin-top: 3px; }
-
-/* --- バッジ（MyHood Badge: px-2.5 py-1 rounded-full text-xs）。色だけで伝えずアイコンか文言を添える --- */
+.ui-error .ui-icon { width: 18px; height: 18px; margin-top: 2px; }
+.ui-divider { display: flex; align-items: center; gap: var(--space-3); font-size: var(--text-sm); color: var(--md-sys-color-on-surface-variant); }
+.ui-divider::before, .ui-divider::after { content: ""; flex: 1; height: 1px; background: var(--md-sys-color-outline-variant); }
+/* バッジ: 色だけで伝えずアイコンか文言を添える */
 .ui-badge {
   display: inline-flex; align-items: center; gap: var(--space-1);
-  padding: var(--space-1) 10px;
-  border-radius: var(--radius-full);
-  font: 400 var(--text-xs)/1.4 var(--font-sans);
-  white-space: nowrap;
+  padding: var(--space-1) 10px; border-radius: var(--radius-full);
+  font: 600 var(--text-xs)/1.4 var(--font-sans); white-space: nowrap;
 }
 .ui-badge .ui-icon { width: 14px; height: 14px; }
-.ui-badge-neutral { background: color-mix(in oklab, var(--md-sys-color-primary) 5%, transparent); color: var(--md-sys-color-on-surface-variant); }
+.ui-badge-neutral { background: var(--ios-fill); color: var(--md-sys-color-on-surface-variant); }
 .ui-badge-primary { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
 .ui-badge-error { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+/* アバター（頭文字）。色は ui.tsx が洋パレットから選ぶ */
+.ui-avatar { display: inline-grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: var(--radius-full); font: 600 var(--text-sm)/1 var(--font-sans); }
+.ui-avatar.sm { width: 32px; height: 32px; font-size: var(--text-xs); }
+.ui-avatar.lg { width: 88px; height: 88px; font-size: var(--text-2xl); }
 
-/* --- 下部タブ（MyHood TabBar: 画面下に浮くガラスのカプセル。選択中だけ白い丸） --- */
+/* ===== 日付の札（タイムカードの行の頭）と月の切り替え ===== */
+.ui-date {
+  display: inline-grid; place-content: center; justify-items: center; flex: none;
+  width: 40px; height: 40px; border-radius: var(--radius-xl);
+  background: var(--ios-fill); line-height: 1;
+}
+.ui-date b { font: 700 var(--text-base)/1 var(--font-sans); font-variant-numeric: tabular-nums; }
+.ui-date small { margin-top: 2px; font-size: var(--text-2xs); color: var(--md-sys-color-on-surface-variant); }
+.ui-date.current { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+.ui-date.current small { color: inherit; }
+/* 前後の矢印が動かないよう幅を固定 */
+.ui-month { margin: 0; min-width: 8em; text-align: center; font: 700 var(--text-xl)/1.3 var(--font-sans); font-variant-numeric: tabular-nums; }
+/* 入力欄（ラベル付き）と並べたボタンを入力欄の下端にそろえる */
+.ui-row.end { align-items: end; }
+
+/* ===== 下部タブ（画面下に浮くガラスのカプセル。選択中だけ白い丸） ===== */
 .ui-tabbar {
   position: fixed; z-index: 50;
   left: 50%; bottom: calc(env(safe-area-inset-bottom) + 12px); transform: translateX(-50%);
@@ -167,31 +324,69 @@ textarea.ui-input { min-height: 120px; resize: vertical; line-height: var(--lead
   -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px);
 }
 .ui-tab {
-  flex: 1; min-width: 0; height: 52px; padding: 0 var(--space-1);
+  flex: 1; min-width: 0; height: 56px; padding: 0 var(--space-1);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   border: none; border-radius: var(--radius-full);
   background-color: transparent; color: var(--md-sys-color-on-surface-variant);
-  font: 500 var(--text-2xs)/14px var(--font-sans);
+  font: 600 var(--text-2xs)/14px var(--font-sans);
   white-space: nowrap; user-select: none; cursor: pointer;
 }
-.ui-tab .ui-icon { width: 22px; height: 22px; }
+.ui-tab .ui-icon { width: 24px; height: 24px; }
 /* 選択中は色と白い丸だけで示す（太さを変えるとアイコンが揺れて見える） */
-.ui-tab[aria-current="page"] {
-  background-color: var(--glass-tabbar-active-bg);
-  box-shadow: var(--glass-tabbar-active-shadow);
-  color: var(--md-sys-color-primary);
+.ui-tab[aria-current="page"] { background-color: var(--glass-tabbar-active-bg); box-shadow: var(--glass-tabbar-active-shadow); color: var(--md-sys-color-primary); }
+
+/* ===== PC のサイドバー（macOS の App Store と同じ。画面の高さいっぱい、右に区切り線）===== */
+.ui-sidebar { display: none; }
+@media (min-width: 1024px) { /* ponytail: 境目は幅だけ。iPad の縦向き（768px）はスマホと同じ下のタブ */
+  .ui-shell { display: grid; grid-template-columns: 260px minmax(0, 1fr); align-items: start; }
+  .ui-sidebar {
+    position: sticky; top: 0;
+    display: flex; flex-direction: column; gap: var(--space-4);
+    height: 100dvh; padding: var(--space-5) var(--space-3) var(--space-4);
+    border-right: 1px solid var(--md-sys-color-outline-variant);
+    background: var(--ios-cell);
+    overflow-y: auto;
+  }
+  .ui-sidebar-brand {
+    display: flex; align-items: center; gap: var(--space-2); min-height: 40px; padding: 0 var(--space-2);
+    font: 700 var(--text-base)/1.3 var(--font-sans); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ui-sidebar ul { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+  .ui-sidebar-item, .ui-sidebar-user {
+    display: flex; align-items: center; gap: var(--space-3);
+    width: 100%; min-height: var(--tap-min); padding: var(--space-1) var(--space-3);
+    border: none; border-radius: var(--radius-xl);
+    background-color: transparent; color: var(--md-sys-color-on-surface);
+    font: 500 var(--text-base)/1.2 var(--font-sans); text-align: left;
+  }
+  .ui-sidebar-item, button.ui-sidebar-user { cursor: pointer; }
+  .ui-sidebar-item .ui-icon { color: var(--md-sys-color-on-surface-variant); }
+  /* 選択中は青い文字とアイコン＋淡いグレーの面（太さは変えない） */
+  .ui-sidebar-item[aria-current="page"] { background-color: var(--ios-fill); color: var(--md-sys-color-primary); }
+  .ui-sidebar-item[aria-current="page"] .ui-icon { color: inherit; }
+  /* 使っている人は一番下（押すとプロフィール） */
+  .ui-sidebar-user { margin-top: auto; }
+  .ui-sidebar-me { min-width: 0; display: grid; }
+  .ui-sidebar-me b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ui-sidebar-me small { font-size: var(--text-xs); color: var(--md-sys-color-on-surface-variant); }
+
+  /* 下のタブはスマホだけ。ヘッダーは右の中身の上に貼り付き、題名を中身の列にそろえる */
+  .ui-tabbar { display: none; }
+  .ui-page { padding-bottom: var(--space-7); }
+  .ui-shell-main .ui-header { padding-inline: max(var(--space-4), calc((100% - 720px) / 2 + var(--space-4))); }
+  .ui-header.back-mobile-only .ui-header-back { display: none; }
+  /* スマホだけの入口（PC はサイドバーから行ける画面への⚙︎など） */
+  .ui-mobile-only { display: none; }
 }
 
 /* すりガラスが使えない・透明を減らす設定では不透明の地にする */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .ui-tabbar, .ui-header { background: var(--md-sys-color-surface); }
+  .ui-tabbar, .ui-header { background: var(--ios-grouped-bg); }
 }
 @media (prefers-reduced-transparency: reduce) {
-  .ui-tabbar, .ui-header { background: var(--md-sys-color-surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .ui-tabbar, .ui-header { background: var(--ios-grouped-bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .ui-root *, .ui-root *::before, .ui-root *::after {
-    transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important;
-  }
+  *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
   .ui-btn:active:not(:disabled) { transform: none; }
 }

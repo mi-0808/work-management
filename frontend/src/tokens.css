@@ -2,7 +2,7 @@
    色は MyHoodβ と同じ（MyhoodBeta/src/styles/theme.css の --md-sys-color-*。2026-09-30 決定の「白×青」M3 方式）。
    名前も MyHood と同じなので、MyHood 側を変えたら値を写すだけで揃う。
    light-dark(ライト, ダーク) で両モードを1行に持つ。どちらが効くかは要素の color-scheme で決まる
-   （.ui-root が light dark を宣言。既存画面は未宣言なのでライトのまま）。
+   （ui.css の :root が light dark を宣言し、端末の設定に従う）。
    ここ以外に色を書かない。値を変えたら npm run check:contrast */
 :root {
   /* --- 色: M3 カラーロール（15色）。色みを持つのは primary（青）と error（赤）だけ --- */
@@ -21,6 +21,12 @@
   --md-sys-color-on-error:               light-dark(#ffffff, #690005);
   --md-sys-color-error-container:        light-dark(#ffdad6, #93000a);
   --md-sys-color-on-error-container:     light-dark(#410002, #ffdad6);
+
+  /* iOS のグループ化された画面: 地とまとまり（セル）。ライトは「グレーの地に白いセル」、ダークは「黒い地に濃いグレーのセル」。
+     値は上の役割の組み合わせなので新しい色ではない */
+  --ios-grouped-bg: light-dark(#f5f5f5, #121212); /* = surface-container / surface */
+  --ios-cell:       light-dark(#ffffff, #1e1e1e); /* = surface / surface-container */
+  --ios-fill:       light-dark(#efefef, #282828); /* 入力欄・押している間 = surface-container-high */
 
   /* 押す・なぞる・フォーカスは新しい色を作らず、上に色をこの割合で重ねる */
   --md-sys-state-hover-state-layer-opacity: 0.08;
@@ -56,6 +62,7 @@
   --text-xs: 14px;    /* バッジ・時刻など単独で意味が完結しないものだけ */
   --text-2xs: 12px;   /* タブバーの文字などごく小さいラベルだけ */
   --text-input: 16px; /* 入力欄。16px 未満だと iOS がフォーカス時に拡大する */
+  --text-display: 64px; /* ホームの時計など、画面の主役の数字だけ */
   --leading-relaxed: 1.625; /* 和文の本文 */
   --leading-tight: 1.25;    /* 見出し */
 
@@ -64,17 +71,14 @@
   --space-3: 13px;  /* 入力欄の内側 */
   --space-4: 17px;  /* 要素の間・シートの内側 */
   --space-5: 21px;  /* カードの内側 */
-  --space-6: 26px;  /* ボタンの左右 */
+  --space-6: 26px;  /* PC の題名の下 */
+  --space-7: 34px;  /* セクションの間（枠ではなく余白で区切る） */
 
   --radius-xl: 13px;     /* 入力欄・エラー表示 */
-  --radius-2xl: 17px;    /* カード・ボタン */
-  --radius-full: 9999px; /* バッジ・アイコンボタン・タブバー */
+  --radius-2xl: 17px;    /* 知らせ・小さなまとまり */
+  --radius-3xl: 26px;    /* セル（カード・リスト）・タイルボタン。iOS 26 の大きな角丸 */
+  --radius-full: 9999px; /* ボタン（カプセル）・バッジ・アイコンボタン・セグメント・タブバー */
   --tap-min: 48px;       /* 押せる要素の最小。HIG 44pt と M3 48dp の大きい方 */
-
-  /* --- 影（MyHood と同じ。ダークは濃く） --- */
-  --shadow-sm: 0 1px 2px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.3));
-  --shadow-md: 0 4px 12px light-dark(rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.4)),
-               0 2px 4px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.3));
 
   /* --- 動き（M3 standard easing。reduced-motion では ui.css で無効化） --- */
   --ease-standard: cubic-bezier(.2, 0, 0, 1);
