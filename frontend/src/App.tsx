@@ -1,12 +1,10 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isProviderEnabled, supabase, today } from './lib/supabase'
 import { DEMO, DEMO_MEMBERS } from './lib/demo'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
-import type { Attendance, Break, FeedbackPost, Goal, GoalEvaluation, Invoice, Member, MoneyExpense, MoneyIncome, MoneyProfile, MoneyRecurring, NextAction, Report as ReportRow, Announcement } from './lib/supabase'
+import type { Attendance, Break, Member, Report as ReportRow } from './lib/supabase'
 
-type Tab = 'home' | 'calendar' | 'timecard' | 'profile'
+type Tab = 'home' | 'timecard' | 'profile'
 
 const fmtTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '—'
@@ -357,7 +355,7 @@ function Onboarding({ email, onDone }: { email: string; onDone: () => void }) {
 }
 
 /* ---------- 出勤・退勤 ---------- */
-function Home({ me, onOpenMember }: { me: Member; onOpenMember: (m: Member) => void }) {
+function Home({ me }: { me: Member }) {
   const now = useClock()
   const [att, setAtt] = useState<Attendance | null>(null)
   const [plan, setPlan] = useState('')
@@ -648,20 +646,15 @@ function Home({ me, onOpenMember }: { me: Member; onOpenMember: (m: Member) => v
         )}
       </div>
 
-      <HomeDashboard me={me} onOpenMember={onOpenMember} />
+      <HomeDashboard me={me} />
     </>
   )
 }
 
 
-/* ---------- ホームの要約（今週・今月・給与見込み／やること／お知らせ／管理者はメンバー一覧） ---------- */
-function HomeDashboard({ me, onOpenMember }: { me: Member; onOpenMember: (m: Member) => void }) {
+/* ---------- ホームの要約（今週・今月の実働と曜日別・給与見込み） ---------- */
+function HomeDashboard({ me }: { me: Member }) {
   const [atts, setAtts] = useState<Attendance[]>([])
-  const [plans, setPlans] = useState<ReportRow[]>([])
-  const [todos, setTodos] = useState<NextAction[]>([])
-  const [news, setNews] = useState<Announcement[] | null>(null) // null = テーブル未作成など取得失敗
-  const [members, setMembers] = useState<Member[]>([])
-  const [draft, setDraft] = useState('')
   const t = today()
   const month = t.slice(0, 7)
   const wk = weekOf(t)
@@ -670,52 +663,24 @@ function HomeDashboard({ me, onOpenMember }: { me: Member; onOpenMember: (m: Mem
     const d = new Date(wk + 'T00:00'); d.setDate(d.getDate() + i); return d.toLocaleDateString('sv-SE')
   })
 
-  const loadNews = useCallback(async () => {
-    const { data, error } = await supabase.from('announcements').select('*').eq('company_id', me.company_id)
-      .order('created_at', { ascending: false }).limit(5)
-    setNews(error ? null : (data as Announcement[]) ?? [])
-  }, [me.company_id])
-
   useEffect(() => {
-    Promise.all([
-      supabase.from('attendances').select('*, breaks(*)').eq('member_id', me.id).gte('work_date', from),
-      supabase.from('daily_reports').select('*').eq('member_id', me.id).gte('work_date', wk),
-      supabase.from('next_actions').select('*').eq('member_id', me.id),
-    ]).then(([{ data: a }, { data: r }, { data: n }]) => {
-      setAtts((a as Attendance[]) ?? [])
-      setPlans((r as ReportRow[]) ?? [])
-      setTodos(((n as NextAction[]) ?? []).filter((x) => x.status !== 'done')
-        .sort((p, q) => (p.due_date ?? '9999') < (q.due_date ?? '9999') ? -1 : 1).slice(0, 3))
-    })
-    loadNews()
-    if (me.role === 'admin') {
-      supabase.from('members').select('*').eq('company_id', me.company_id).eq('status', 'active').order('created_at')
-        .then(({ data }) => setMembers(((data as Member[] | null) ?? []).filter((m) => m.id !== me.id)))
-    }
-  }, [me.id, me.company_id, me.role, from, wk, loadNews])
+    supabase.from('attendances').select('*, breaks(*)').eq('member_id', me.id).gte('work_date', from)
+      .then(({ data }) => setAtts((data as Attendance[]) ?? []))
+  }, [me.id, from])
 
-  const done = atts.filter((a) => a.clock_in) // 勤務中の今日も今までの分を数える（プロフィールの稼働と請求と揃える）
+  const done = atts.filter((a) => a.clock_in) // 勤務中の今日も今までの分を数える
   const minOf = (d: string) => done.filter((a) => a.work_date === d).reduce((sum, a) => sum + workedMinutes(a), 0)
   const weekMin = weekDays.reduce((sum, d) => sum + minOf(d), 0)
   const monthMin = done.filter((a) => a.work_date.startsWith(month)).reduce((sum, a) => sum + workedMinutes(a), 0)
-  // 今日以降の平日で稼働予定が未入力の日
-  const unplanned = weekDays.filter((d) => d >= t && new Date(d + 'T00:00').getDay() % 6 !== 0
-    && !plans.find((r) => r.work_date === d && (r.planned_start || r.plan)))
-
-  const post = async () => {
-    if (!draft.trim()) return
-    const { error } = await supabase.from('announcements')
-      .insert({ company_id: me.company_id, author_member_id: me.id, body: draft.trim(), created_at: new Date().toISOString() })
-    if (error) return alert(`配信できませんでした（${error.message}）`)
-    setDraft(''); loadNews()
-  }
 
   return (
     <>
       <div className="home-stats">
         <div><span>今週</span><b>{hmm(weekMin)}</b></div>
         <div><span>今月</span><b>{hmm(monthMin)}</b></div>
-        {me.hourly_rate > 0 && <div><span>給与見込み</span><b>{yen(monthMin / 60 * me.hourly_rate)}</b></div>}
+        {(me.contract_amount != null || me.hourly_rate > 0) && (
+          <div><span>給与見込み</span><b>{yen(me.contract_amount ?? monthMin / 60 * me.hourly_rate)}</b></div>
+        )}
       </div>
 
       <div className="week-strip">
@@ -726,184 +691,7 @@ function HomeDashboard({ me, onOpenMember }: { me: Member; onOpenMember: (m: Mem
           </div>
         ))}
       </div>
-
-      {(unplanned.length > 0 || todos.length > 0) && (
-        <div className="card card-plain">
-          <h2>やること</h2>
-          <div className="list">
-            {unplanned.length > 0 && (
-              <div className="list-item">
-                <span className="badge badge-yellow">予定</span>
-                <div className="title">稼働予定が未入力の日があります（{unplanned.map((d) => d.slice(5).replace('-', '/')).join('・')}）</div>
-              </div>
-            )}
-            {todos.map((n) => (
-              <div key={n.id} className="list-item">
-                <span className="badge badge-blue">{n.due_date ? n.due_date.slice(5).replace('-', '/') : '期日なし'}</span>
-                <div className="title">{n.title}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {news && (news.length > 0 || me.role === 'admin') && (
-        <div className="card card-plain">
-          <h2>お知らせ</h2>
-          {me.role === 'admin' && (
-            <div className="form-actions news-form" style={{ marginBottom: 10 }}>
-              <input placeholder="メンバー全員にお知らせを配信" value={draft} onChange={(e) => setDraft(e.target.value)} />
-              <button className="btn-primary" style={{ margin: 0 }} disabled={!draft.trim()} onClick={post}>配信</button>
-            </div>
-          )}
-          <div className="list">
-            {news.length === 0 ? <div className="empty">お知らせはまだありません</div> : news.map((n) => (
-              <div key={n.id} className="list-item">
-                <div className="when">{n.created_at.slice(5, 10).replace('-', '/')}</div>
-                <div className="title">{n.body}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {members.length > 0 && (
-        <div className="card card-plain">
-          <h2>メンバー <span className="tag">タップで勤怠・支払・経費を見る</span></h2>
-          <div className="member-icons">
-            {members.map((m, i) => (
-              <button key={m.id} className="member-icon" onClick={() => onOpenMember(m)}>
-                <div className="m-avatar" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>{m.name[0]}</div>
-                <div className="name">{m.name}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </>
-  )
-}
-
-/* ---------- 稼働予定表（日報タブ内・自己管理用。月単位で切り替え） ---------- */
-function PlanRows({ me }: { me: Member }) {
-  const [rows, setRows] = useState<ReportRow[]>([])
-  const [month, setMonth] = useState(today().slice(0, 7)) // "YYYY-MM"
-  const [err, setErr] = useState('')
-  const [savedAt, setSavedAt] = useState('') // 直近保存した行のwork_date（✓表示用）
-
-  const blank = useCallback((date: string): ReportRow => ({
-    id: '', member_id: me.id, work_date: date, body: '', video: null,
-    submitted_at: '', plan: '', planned_start: '', planned_end: '',
-  } as ReportRow), [me.id])
-
-  // 選択月の全日を並べ、保存済み行を重ねる（Excelの月シートのイメージ）
-  const load = useCallback(async () => {
-    const [y, m] = month.split('-').map(Number)
-    const from = `${month}-01`
-    const to = new Date(y, m, 1).toLocaleDateString('sv-SE').slice(0, 7) + '-01'
-    const { data } = await supabase.from('daily_reports').select('*').eq('member_id', me.id)
-      .gte('work_date', from).lt('work_date', to).order('work_date', { ascending: true })
-    const merged = new Map<string, ReportRow>()
-    const days = new Date(y, m, 0).getDate()
-    for (let d = 1; d <= days; d++) merged.set(`${month}-${String(d).padStart(2, '0')}`, blank(`${month}-${String(d).padStart(2, '0')}`))
-    for (const r of ((data as ReportRow[]) ?? [])) merged.set(r.work_date, r)
-    setRows([...merged.values()].sort((a, b) => (a.work_date < b.work_date ? -1 : 1)))
-  }, [me.id, month, blank])
-  useEffect(() => { load() }, [load])
-
-  const moveMonth = (delta: number) => {
-    const [y, m] = month.split('-').map(Number)
-    setMonth(new Date(y, m - 1 + delta, 1).toLocaleDateString('sv-SE').slice(0, 7))
-  }
-
-  const dirty = useRef(new Set<string>()) // セルを触った行だけblur時に自動保存する
-  const patch = (date: string, p: Partial<ReportRow>) => {
-    dirty.current.add(date)
-    setRows((rs) => rs.map((r) => (r.work_date === date ? { ...r, ...p } : r)))
-  }
-
-  const save = async (r: ReportRow) => {
-    if (!dirty.current.has(r.work_date)) return
-    dirty.current.delete(r.work_date)
-    setErr('')
-    const { error } = await supabase.from('daily_reports').upsert(
-      { member_id: me.id, work_date: r.work_date, body: r.body ?? '',
-        plan: r.plan, planned_start: r.planned_start || null, planned_end: r.planned_end || null,
-        confirmed: r.confirmed ?? false },
-      { onConflict: 'member_id,work_date' },
-    )
-    if (error) return setErr(`保存できませんでした（${error.message}）`)
-    setSavedAt(r.work_date)
-    setTimeout(() => setSavedAt((s) => (s === r.work_date ? '' : s)), 1500)
-  }
-
-  // 時刻のゆるい入力を "HH:MM" に整形。"1100"→"11:00"、"9"→"09:00"、解釈不能なら空に
-  const normTime = (v: string) => {
-    const d = v.replace(/[^0-9]/g, '')
-    if (!d) return ''
-    const [h, m] = d.length <= 2 ? [+d, 0] : [+d.slice(0, -2), +d.slice(-2)]
-    if (h > 23 || m > 59) return ''
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
-  }
-
-  const fmtDate = (d: string) => {
-    const dt = new Date(d + 'T00:00')
-    return `${d.slice(5).replace('-', '/')}(${'日月火水木金土'[dt.getDay()]})`
-  }
-
-  const [y, m] = month.split('-').map(Number)
-  return (
-    <div className="card card-plain">
-      <h2>
-        稼働予定表
-        <span className="month-nav">
-          <button aria-label="前の月" onClick={() => moveMonth(-1)}>◀</button>
-          <b>{y}年{m}月</b>
-          <button aria-label="次の月" onClick={() => moveMonth(1)}>▶</button>
-        </span>
-      </h2>
-      <div className="plan-table-wrap">
-          <table className="plan-table">
-            <thead>
-              <tr><th>日付</th><th>開始</th><th>終了</th><th>やること</th></tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                return (
-                <tr key={r.work_date} className={r.work_date === today() ? 'pt-today' : ''}>
-                  <td className="pt-date">{fmtDate(r.work_date)}
-                    {savedAt === r.work_date && <span className="pt-saved" role="status">✓保存</span>}</td>
-                  {(
-                    <>
-                      <td><input type="text" inputMode="numeric" placeholder="0900" className="pt-time"
-                        aria-label={`${fmtDate(r.work_date)}の稼働予定開始`} value={r.planned_start ?? ''}
-                        onChange={(e) => patch(r.work_date, { planned_start: e.target.value })}
-                        onBlur={(e) => {
-                          const v = normTime(e.target.value)
-                          if (v !== (r.planned_start ?? '')) patch(r.work_date, { planned_start: v })
-                          save({ ...r, planned_start: v })
-                        }} /></td>
-                      <td><input type="text" inputMode="numeric" placeholder="1800" className="pt-time"
-                        aria-label={`${fmtDate(r.work_date)}の稼働予定終了`} value={r.planned_end ?? ''}
-                        onChange={(e) => patch(r.work_date, { planned_end: e.target.value })}
-                        onBlur={(e) => {
-                          const v = normTime(e.target.value)
-                          if (v !== (r.planned_end ?? '')) patch(r.work_date, { planned_end: v })
-                          save({ ...r, planned_end: v })
-                        }} /></td>
-                    </>
-                  )}
-                  <td className="pt-plan"><textarea rows={1} placeholder="やることを自由に記入"
-                    aria-label={`${fmtDate(r.work_date)}のやること`} value={r.plan ?? ''}
-                    onChange={(e) => patch(r.work_date, { plan: e.target.value })}
-                    onBlur={() => save(r)} /></td>
-                </tr>
-              )})}
-            </tbody>
-          </table>
-      </div>
-      {err && <div className="notice warn">{err}</div>}
-    </div>
   )
 }
 
@@ -1112,1182 +900,9 @@ function KintaiTable({ me }: { me: Member }) {
   )
 }
 
-/* ---------- 稼働表CSV・請求書（名簿タブとプロフィールで共用） ---------- */
+/* ---------- 分 → "H:MM" ---------- */
 const yen = (n: number) => `¥${Math.round(n).toLocaleString('ja-JP')}`
 const hmm = (min: number) => `${Math.floor(min / 60)}:${String(Math.round(min % 60)).padStart(2, '0')}`
-const monthRange = (month: string) => {
-  const [y, mo] = month.split('-').map(Number)
-  return { from: `${month}-01`, to: new Date(y, mo, 1).toLocaleDateString('sv-SE'), y, mo }
-}
-
-// その月の実働合計（分）。休憩を引いた workedMinutes を日ごとに合算
-const monthWorkedMinutes = async (memberId: string, month: string) => {
-  const { from, to } = monthRange(month)
-  const { data } = await supabase.from('attendances').select('*, breaks(*)')
-    .eq('member_id', memberId).gte('work_date', from).lt('work_date', to)
-  return ((data as Attendance[]) ?? []).reduce((sum, a) => sum + workedMinutes(a), 0)
-}
-
-// 出勤簿CSV（現行スプレッドシートの列構成に合わせる。最初の中抜け＝ランチ扱い）
-const exportKintaiCsv = async (targets: Pick<Member, 'id' | 'name'>[], month: string) => {
-  const { from, to, y, mo } = monthRange(month)
-  const atts: Attendance[] = []
-  const reps: ReportRow[] = []
-  // ponytail: メンバーごとに直列fetch。人数が増えて遅くなったらin()で一括に
-  for (const m of targets) {
-    const [{ data: a }, { data: r }] = await Promise.all([
-      supabase.from('attendances').select('*, breaks(*)').eq('member_id', m.id)
-        .gte('work_date', from).lt('work_date', to),
-      supabase.from('daily_reports').select('*').eq('member_id', m.id)
-        .gte('work_date', from).lt('work_date', to),
-    ])
-    atts.push(...((a as Attendance[]) ?? []))
-    reps.push(...((r as ReportRow[]) ?? []))
-  }
-  const t = (iso?: string | null) => (iso ? new Date(iso).toTimeString().slice(0, 5) : '')
-  const dur = (min: number) => (min > 0 ? hmm(min) : '')
-  const bMin = (b?: Break) =>
-    b?.ended_at ? (new Date(b.ended_at).getTime() - new Date(b.started_at).getTime()) / 60000 : 0
-  const rows = [[
-    '氏名', '日付', '曜日', '出勤', 'ランチ入り', 'ランチ戻り', '退勤',
-    '中抜け開始1', '中抜け戻り1', '中抜け開始2', '中抜け戻り2', '中抜け開始3', '中抜け戻り3',
-    '総時間', '休憩', '中抜け1', '中抜け2', '実労働時間', '業務内容',
-  ]]
-  const days = new Date(y, mo, 0).getDate()
-  for (const m of targets) {
-    for (let d = 1; d <= days; d++) {
-      const date = `${month}-${String(d).padStart(2, '0')}`
-      const dow = '日月火水木金土'[new Date(y, mo - 1, d).getDay()]
-      const a = atts.find((x) => x.member_id === m.id && x.work_date === date)
-      const bs = [...(a?.breaks ?? [])].sort((p, q) => (p.started_at < q.started_at ? -1 : 1))
-      const gross = a?.clock_in && a?.clock_out
-        ? (new Date(a.clock_out).getTime() - new Date(a.clock_in).getTime()) / 60000 : 0
-      const allBreaks = bs.reduce((s, b) => s + bMin(b), 0)
-      const rep = reps.find((r) => r.member_id === m.id && r.work_date === date)
-      rows.push([
-        m.name, date, dow,
-        t(a?.clock_in), t(bs[0]?.started_at), t(bs[0]?.ended_at), t(a?.clock_out),
-        t(bs[1]?.started_at), t(bs[1]?.ended_at), t(bs[2]?.started_at), t(bs[2]?.ended_at),
-        t(bs[3]?.started_at), t(bs[3]?.ended_at),
-        dur(gross), dur(bMin(bs[0])), dur(bMin(bs[1])), dur(bMin(bs[2])),
-        dur(Math.max(0, gross - allBreaks)),
-        // 業務内容: 日報の実績 > 日報タブの「やること」 > 出勤時の今日の予定
-        rep?.body || rep?.plan || a?.plan || '',
-      ])
-    }
-  }
-  const csv = '\uFEFF' + rows
-    .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
-    .join('\r\n')
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-  const el = document.createElement('a')
-  el.href = url
-  el.download = `出勤簿_${month}.csv`
-  el.click()
-  URL.revokeObjectURL(url)
-}
-
-const invoiceTotal = (inv: Invoice) =>
-  Math.round((inv.minutes / 60) * inv.hourly_rate) +
-  inv.expenses.reduce((s, e) => s + e.amount, 0)
-
-// 印刷用の請求書ビュー（本人・管理者の両方から使う）
-function InvoiceView({ inv, memberName, onClose }: { inv: Invoice; memberName: string; onClose: () => void }) {
-  const [companyName, setCompanyName] = useState('')
-  useEffect(() => {
-    supabase.from('companies').select('name').limit(1).maybeSingle()
-      .then(({ data }) => setCompanyName((data as { name?: string } | null)?.name ?? ''))
-  }, [])
-  const labor = Math.round((inv.minutes / 60) * inv.hourly_rate)
-  return (
-    <div className="invoice-page">
-      <div className="form-actions no-print" style={{ marginTop: 0 }}>
-        <button className="btn-outline" onClick={onClose}>← 戻る</button>
-        <button className="btn-primary" style={{ margin: 0 }} onClick={() => window.print()}>印刷 / PDF保存</button>
-      </div>
-      <div className="invoice">
-        <h1>請求書</h1>
-        <div className="invoice-head">
-          <div>
-            <div className="invoice-to">{companyName} 御中</div>
-            <div className="invoice-meta">対象期間: {inv.month.replace('-', '年')}月分</div>
-            <div className="invoice-meta">発行日: {new Date(inv.issued_at).toLocaleDateString('ja-JP')}</div>
-          </div>
-          <div className="invoice-from">
-            <div>{memberName}</div>
-            {inv.status === 'paid' && <span className="badge badge-blue">支払済み</span>}
-          </div>
-        </div>
-        <table className="invoice-table">
-          <thead>
-            <tr><th>項目</th><th>数量</th><th>単価</th><th>金額</th></tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>業務委託料（実働 {hmm(inv.minutes)}）</td>
-              <td>{(inv.minutes / 60).toFixed(2)} h</td>
-              <td>{yen(inv.hourly_rate)}</td>
-              <td>{yen(labor)}</td>
-            </tr>
-            {inv.expenses.map((e, i) => (
-              <tr key={i}><td>{e.label}（経費）</td><td>—</td><td>—</td><td>{yen(e.amount)}</td></tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="invoice-total">合計 {yen(invoiceTotal(inv))}</div>
-      </div>
-    </div>
-  )
-}
-
-/* ---------- お金管理モード（プロフィールから入る全画面モード） ---------- */
-const STANCE_LABELS: Record<MoneyProfile['stance'], string> = {
-  president: '社長（会社代表）',
-  sole_proprietor: '個人事業主',
-  part_time: 'アルバイト',
-  employee: '会社員',
-}
-
-// 扶養の壁の候補（金額円 → 短い説明）。2025年の税制改正後の目安
-const WALLS: [number, string][] = [
-  [1030000, '103万円: 住民税がかかり始める目安（自治体により異なる）'],
-  [1060000, '106万円: 従業員51人以上の会社で週20時間以上働くと社会保険に加入'],
-  [1230000, '123万円: 所得税がかかり始めるライン（2025年改正で103万円から引き上げ）'],
-  [1300000, '130万円: 社会保険の扶養から外れるライン'],
-  [1500000, '150万円: 配偶者特別控除が満額でなくなる目安'],
-]
-
-// Excel風の金額セル: 表示値をそのまま編集し、Enter/フォーカスアウトで確定（稼働表と同じ操作感）
-function CellNum({ value, label, placeholder = '0', onCommit }: {
-  value: number; label: string; placeholder?: string; onCommit: (v: number) => void
-}) {
-  return (
-    <input type="text" inputMode="numeric" className="pt-mini" aria-label={label} placeholder={placeholder}
-      key={value} defaultValue={value || ''}
-      onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) e.currentTarget.blur() }}
-      onBlur={(e) => {
-        const v = Math.round(Number(e.target.value.replace(/[,¥\s]/g, '')))
-        if (!Number.isNaN(v) && v >= 0 && v !== value) onCommit(v)
-      }} />
-  )
-}
-
-// 表の最下行から直接入力して追加するExcel風の行（日付/月・項目・金額）
-function TableAddRow({ dateKind, lead = 0, tail = 1, placeholder, onAdd }: {
-  dateKind: 'date' | 'month'
-  lead?: number // 日付と項目の間の空セル数
-  tail?: number // 金額より後ろのセル数（先頭に追加ボタンを置く）
-  placeholder: string
-  onAdd: (date: string, label: string, amount: number) => void
-}) {
-  const [d, setD] = useState(dateKind === 'month' ? today().slice(0, 7) : today())
-  const [l, setL] = useState('')
-  const [a, setA] = useState('')
-  const amt = Math.round(Number(a.replace(/[,¥\s]/g, '')))
-  const ok = l.trim() !== '' && amt > 0
-  const submit = () => { if (ok) { onAdd(d, l.trim(), amt); setL(''); setA('') } }
-  const onKey = (e: { key: string; nativeEvent: { isComposing: boolean } }) => {
-    if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit()
-  }
-  return (
-    <tr className="pt-add-row">
-      <td className="pt-cell">
-        <input type={dateKind} className="pt-mini pt-mini-date" aria-label={dateKind === 'month' ? '月' : '日付'}
-          value={d} onChange={(e) => setD(e.target.value)} />
-      </td>
-      {Array.from({ length: lead }, (_, i) => <td key={i} className="pt-cell" />)}
-      <td className="pt-cell">
-        <input type="text" className="pt-mini" placeholder={placeholder} aria-label="項目"
-          value={l} onChange={(e) => setL(e.target.value)} onKeyDown={onKey} />
-      </td>
-      <td className="pt-cell pt-yen">
-        <input type="text" inputMode="numeric" className="pt-mini" placeholder="金額" aria-label="金額"
-          value={a} onChange={(e) => setA(e.target.value)} onKeyDown={onKey} />
-      </td>
-      <td className="pt-cell" colSpan={tail}>
-        <button className="link-btn" disabled={!ok} onClick={submit}>＋追加</button>
-      </td>
-    </tr>
-  )
-}
-
-// 住所→緯度経度（OpenStreetMap Nominatim。失敗してもnullで進む）
-const geocode = async (addr: string): Promise<{ lat: number; lng: number } | null> => {
-  try {
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(addr)}`)
-    const list = await res.json()
-    return list?.[0] ? { lat: Number(list[0].lat), lng: Number(list[0].lon) } : null
-  } catch {
-    return null
-  }
-}
-
-// 支出マップ（緯度経度のある経費をピン表示）
-function ExpenseMap({ rows }: { rows: MoneyExpense[] }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const map = L.map(el).setView([rows[0]!.lat!, rows[0]!.lng!], 13)
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
-    }).addTo(map)
-    const group = L.featureGroup(rows.map((e) =>
-      L.circleMarker([e.lat!, e.lng!], { radius: 9, color: '#00654f', fillColor: '#00654f', fillOpacity: .7 })
-        .bindPopup(`${e.occurred_on.slice(5).replace('-', '/')} ${e.store ?? e.label} ${yen(e.amount)}`)
-    )).addTo(map)
-    map.fitBounds(group.getBounds().pad(0.3))
-    return () => { map.remove() }
-  }, [rows])
-  return <div ref={ref} className="money-map" />
-}
-
-function MoneyMode({ me, onClose }: { me: Member; onClose: () => void }) {
-  const [profile, setProfile] = useState<MoneyProfile | null>(null)
-  const [loaded, setLoaded] = useState(false)
-  const [picking, setPicking] = useState(false)
-  const [stance, setStance] = useState<MoneyProfile['stance']>('employee')
-  const [expenses, setExpenses] = useState<MoneyExpense[]>([])
-  const [incomes, setIncomes] = useState<MoneyIncome[]>([])
-  const [invs, setInvs] = useState<Invoice[]>([])
-  const [names, setNames] = useState<Record<string, string>>({})
-  const [month, setMonth] = useState(today().slice(0, 7))
-  const [err, setErr] = useState('')
-  // 経費フォーム
-  const [date, setDate] = useState(today())
-  const [label, setLabel] = useState('')
-  const [amount, setAmount] = useState('')
-  const [file, setFile] = useState<File | null>(null)
-  const [linkInv, setLinkInv] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  const isPresident = profile?.stance === 'president' && me.role === 'admin'
-  // 経費の区分はフォームのボタンで切替（初期値は立場から: 個人事業主は個人の帳簿、それ以外は会社提出）
-  const [scope, setScope] = useState<MoneyExpense['scope']>('company')
-  const [calDay, setCalDay] = useState('') // カレンダーで選択中の日（YYYY-MM-DD）
-  const [menuOpen, setMenuOpen] = useState(false) // 経費カードの☰メニュー
-  const [ocr, setOcr] = useState(false) // レシート読み取り中
-  const [ocrMeta, setOcrMeta] = useState<{ store: string | null; address: string | null }>({ store: null, address: null })
-  const [recurring, setRecurring] = useState<MoneyRecurring[]>([])
-  const [budget, setBudget] = useState<number | null>(null) // 会社の月間経費予算
-  // 固定費フォーム
-  const [recLabel, setRecLabel] = useState('')
-  const [recAmount, setRecAmount] = useState('')
-  const [recDay, setRecDay] = useState('1')
-  // カレンダー下の表示切替: 年間の収支確認 / 経費の登録
-  const [moneyView, setMoneyView] = useState<'year' | 'entry'>('entry')
-  // 扶養の壁QA: nullは非表示。stepを進めて最後にrec（推奨額）を出す
-  const [wallQA, setWallQA] = useState<{ step: number; rec?: number | null; note?: string } | null>(null)
-
-  const load = useCallback(async () => {
-    const { data: p } = await supabase.from('money_profiles').select('*')
-      .eq('member_id', me.id).maybeSingle()
-    setProfile((p as MoneyProfile | null) ?? null)
-    setLoaded(true)
-    if (!p) return
-    setScope((p as MoneyProfile).stance === 'sole_proprietor' ? 'personal' : 'company')
-    const president = (p as MoneyProfile).stance === 'president' && me.role === 'admin'
-    const [{ data: exps }, { data: invRows }, { data: rows }, { data: recRows }, { data: comp }, { data: incRows }] = await Promise.all([
-      // RLSで見える範囲＝自分の全経費＋（管理者なら）会社提出分
-      supabase.from('money_expenses').select('*').order('occurred_on', { ascending: false }),
-      president
-        ? supabase.from('invoices').select('*').order('issued_at', { ascending: false })
-        : supabase.from('invoices').select('*').eq('member_id', me.id).order('issued_at', { ascending: false }),
-      supabase.from('members').select('id, name').eq('company_id', me.company_id),
-      supabase.from('money_recurring').select('*').eq('member_id', me.id).order('created_at'),
-      supabase.from('companies').select('expense_budget').eq('id', me.company_id).maybeSingle(),
-      supabase.from('money_incomes').select('*').eq('member_id', me.id).order('month'),
-    ])
-    setIncomes((incRows as MoneyIncome[]) ?? [])
-    const memberRows = (rows as Pick<Member, 'id' | 'name'>[]) ?? []
-    const ids = new Set(memberRows.map((m) => m.id))
-    setNames(Object.fromEntries(memberRows.map((m) => [m.id, m.name])))
-    setInvs(((invRows as Invoice[]) ?? []).filter((v) => ids.has(v.member_id)))
-    setRecurring((recRows as MoneyRecurring[]) ?? [])
-    setBudget((comp as { expense_budget?: number | null } | null)?.expense_budget ?? null)
-
-    // 固定費: 今月分がまだ無ければ経費行を自動生成（本人が開いたタイミングで）
-    // ponytail: 複数端末で同時に開くと重複し得る。実害が出たらDB側でunique制約に
-    let expList = ((exps as MoneyExpense[]) ?? []).filter((e) => e.company_id === me.company_id)
-    const curMonth = today().slice(0, 7)
-    const curDay = Number(today().slice(8))
-    const toGen = ((recRows as MoneyRecurring[]) ?? []).filter((r) =>
-      r.active && r.day_of_month <= curDay &&
-      !expList.some((e) => e.recurring_id === r.id && e.occurred_on.startsWith(curMonth)))
-    if (toGen.length > 0) {
-      const { data: created } = await supabase.from('money_expenses').insert(toGen.map((r) => ({
-        company_id: r.company_id, member_id: r.member_id, scope: r.scope,
-        occurred_on: `${curMonth}-${String(r.day_of_month).padStart(2, '0')}`,
-        label: r.label, amount: r.amount, receipt_path: null, invoice_id: null,
-        status: r.scope === 'company' ? 'submitted' : 'approved', recurring_id: r.id,
-      }))).select()
-      expList = [...((created as MoneyExpense[]) ?? []), ...expList]
-    }
-    setExpenses(expList)
-  }, [me.id, me.role, me.company_id])
-
-  useEffect(() => { load() }, [load])
-
-  const createProfile = async () => {
-    setErr('')
-    const { error } = profile
-      ? await supabase.from('money_profiles').update({ stance }).eq('id', profile.id)
-      : await supabase.from('money_profiles').insert({ member_id: me.id, stance })
-    if (error) return setErr(`保存できませんでした（${error.message}）`)
-    setPicking(false)
-    load()
-  }
-
-  const addExpense = async () => {
-    const amt = Number(amount)
-    if (!label || !amt) return
-    setErr(''); setBusy(true)
-    try {
-      let receipt_path: string | null = null
-      if (file) {
-        receipt_path = `${me.user_id}/${crypto.randomUUID()}-${file.name}`
-        const { error } = await supabase.storage.from('receipts').upload(receipt_path, file)
-        if (error) throw new Error(error.message)
-      }
-      // OCRで住所が取れていればマップ用に座標化（失敗しても登録は進める）
-      const geo = ocrMeta.address ? await geocode(ocrMeta.address) : null
-      const { error } = await supabase.from('money_expenses').insert({
-        company_id: me.company_id, member_id: me.id, scope,
-        occurred_on: date, label, amount: amt, receipt_path,
-        invoice_id: linkInv || null,
-        status: scope === 'company' ? 'submitted' : 'approved',
-        store: ocrMeta.store, address: ocrMeta.address,
-        lat: geo?.lat ?? null, lng: geo?.lng ?? null,
-      })
-      if (error) throw new Error(error.message)
-      setLabel(''); setAmount(''); setFile(null); setLinkInv('')
-      setOcrMeta({ store: null, address: null })
-      load()
-    } catch (e) {
-      setErr(`登録できませんでした（${(e as Error).message}）`)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  // レシート画像を選んだらClaudeで店名・金額・日付を読み取ってフォームに反映
-  const pickReceipt = async (f: File | null) => {
-    setFile(f)
-    if (!f || !f.type.startsWith('image/')) return
-    setOcr(true)
-    try {
-      const b64 = await new Promise<string>((res, rej) => {
-        const r = new FileReader()
-        r.onload = () => res((r.result as string).split(',')[1])
-        r.onerror = rej
-        r.readAsDataURL(f)
-      })
-      const { data } = await supabase.functions.invoke('receipt-ocr', {
-        body: { image: b64, media_type: f.type },
-      })
-      const d = data as { ok?: boolean; store?: string; amount?: number; date?: string; address?: string } | null
-      if (d?.ok) {
-        if (d.store && !label) setLabel(d.store)
-        if (d.amount && !amount) setAmount(String(d.amount))
-        if (d.date) setDate(d.date)
-        setOcrMeta({ store: d.store ?? null, address: d.address ?? null })
-      }
-    } catch { /* 読み取れなくても手入力できるので黙ってフォールバック */ } finally {
-      setOcr(false)
-    }
-  }
-
-  const updateExpense = async (id: string, patch: Partial<MoneyExpense>) => {
-    const { error } = await supabase.from('money_expenses').update(patch).eq('id', id)
-    if (error) return setErr(`更新できませんでした（${error.message}）`)
-    load()
-  }
-
-  const addRecurring = async () => {
-    const amt = Number(recAmount)
-    if (!recLabel || !amt) return
-    const { error } = await supabase.from('money_recurring').insert({
-      company_id: me.company_id, member_id: me.id, scope,
-      label: recLabel, amount: amt,
-      day_of_month: Math.min(28, Math.max(1, Number(recDay) || 1)),
-    })
-    if (error) return setErr(`固定費を追加できませんでした（${error.message}）`)
-    setRecLabel(''); setRecAmount(''); setRecDay('1')
-    load()
-  }
-
-  const toggleRecurring = async (r: MoneyRecurring) => {
-    await supabase.from('money_recurring').update({ active: !r.active }).eq('id', r.id)
-    load()
-  }
-
-  const removeRecurring = async (r: MoneyRecurring) => {
-    if (!confirm(`固定費「${r.label}」を削除しますか？（生成済みの経費行は残ります）`)) return
-    await supabase.from('money_recurring').delete().eq('id', r.id)
-    load()
-  }
-
-  const saveBudget = async (v: string) => {
-    const n = Math.max(0, Math.round(Number(v.replace(/[,¥\s]/g, '')) || 0))
-    const { error } = await supabase.from('companies')
-      .update({ expense_budget: n || null }).eq('id', me.company_id)
-    if (error) return setErr('予算を保存できませんでした（管理者のみ変更できます）')
-    setBudget(n || null)
-  }
-
-  const addIncome = async (month: string, label: string, amount: number) => {
-    const { error } = await supabase.from('money_incomes').insert({
-      company_id: me.company_id, member_id: me.id, month, label, amount,
-    })
-    if (error) return setErr(`売上を登録できませんでした（${error.message}）`)
-    load()
-  }
-
-  // 年間の収支セルの直接編集: 表示合計がその値になるよう「売上」「経費」ラベルの調整行を差し替える。
-  // 請求書やレシート付き経費など明細のある分は動かせないので、その分より小さい値は切り上げる
-  const setMonthIncome = async (m: string, total: number, currentTotal: number) => {
-    const manual = incomes.filter((i) => i.month === m && i.label === '売上').reduce((s, i) => s + i.amount, 0)
-    const v = Math.max(0, total - (currentTotal - manual))
-    await supabase.from('money_incomes').delete().eq('member_id', me.id).eq('month', m).eq('label', '売上')
-    if (v > 0) {
-      await supabase.from('money_incomes').insert({
-        company_id: me.company_id, member_id: me.id, month: m, label: '売上', amount: v,
-      })
-    }
-    load()
-  }
-  const setMonthExpense = async (m: string, total: number, currentTotal: number) => {
-    const day1 = `${m}-01`
-    const manual = expenses.filter((e) => e.member_id === me.id && e.label === '経費' && e.occurred_on === day1 && !e.receipt_path)
-      .reduce((s, e) => s + e.amount, 0)
-    const v = Math.max(0, total - (currentTotal - manual))
-    await supabase.from('money_expenses').delete()
-      .eq('member_id', me.id).eq('label', '経費').eq('occurred_on', day1).is('receipt_path', null)
-    if (v > 0) {
-      await supabase.from('money_expenses').insert({
-        company_id: me.company_id, member_id: me.id, scope,
-        occurred_on: day1, label: '経費', amount: v, receipt_path: null, invoice_id: null,
-        status: scope === 'company' ? 'submitted' : 'approved',
-      })
-    }
-    load()
-  }
-
-  // 表の最下行からの直接追加（レシートなしの簡易登録）
-  const addExpenseInline = async (occurred_on: string, label: string, amount: number) => {
-    const { error } = await supabase.from('money_expenses').insert({
-      company_id: me.company_id, member_id: me.id, scope,
-      occurred_on, label, amount, receipt_path: null, invoice_id: null,
-      status: scope === 'company' ? 'submitted' : 'approved',
-    })
-    if (error) return setErr(`登録できませんでした（${error.message}）`)
-    load()
-  }
-
-  const removeIncome = async (i: MoneyIncome) => {
-    if (!confirm(`売上「${i.label}」を削除しますか？`)) return
-    await supabase.from('money_incomes').delete().eq('id', i.id)
-    load()
-  }
-
-  const saveWall = async (v: number | null) => {
-    if (!profile) return
-    const { error } = await supabase.from('money_profiles').update({ wall_amount: v }).eq('id', profile.id)
-    if (error) return setErr(`保存できませんでした（${error.message}）`)
-    setProfile({ ...profile, wall_amount: v })
-    setWallQA(null)
-  }
-
-  const removeExpense = async (e: MoneyExpense) => {
-    if (!confirm(`「${e.label}」を削除しますか？`)) return
-    if (e.receipt_path) await supabase.storage.from('receipts').remove([e.receipt_path])
-    await supabase.from('money_expenses').delete().eq('id', e.id)
-    load()
-  }
-
-  const openReceipt = async (path: string) => {
-    const { data, error } = await supabase.storage.from('receipts').createSignedUrl(path, 3600)
-    if (error || !data) return setErr('レシートを開けませんでした')
-    window.open(data.signedUrl, '_blank')
-  }
-
-  const markPaid = async (inv: Invoice) => {
-    setErr('')
-    const { error } = await supabase.from('invoices')
-      .update({ status: 'paid', paid_at: new Date().toISOString() }).eq('id', inv.id)
-    if (error) return setErr(`更新できませんでした（${error.message}）`)
-    load()
-  }
-
-  // 個人事業主向け: 年間の収入（支払済み請求書）と経費をCSVで出力
-  const exportMoneyCsv = () => {
-    const year = month.slice(0, 4)
-    const rows = [['日付', '区分', '項目', '金額']]
-    for (const v of invs.filter((v) => v.member_id === me.id && v.status === 'paid' && v.month.startsWith(year))) {
-      rows.push([`${v.month}-01`, '収入', `業務委託料（${v.month.replace('-', '年')}月分）`, String(invoiceTotal(v))])
-    }
-    for (const i of incomes.filter((i) => i.month.startsWith(year))) {
-      rows.push([`${i.month}-01`, '収入', i.label, String(i.amount)])
-    }
-    for (const e of expenses.filter((e) => e.member_id === me.id && e.occurred_on.startsWith(year))) {
-      rows.push([e.occurred_on, '経費', e.label, String(-e.amount)])
-    }
-    const csv = '﻿' + rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(',')).join('\r\n')
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-    const el = document.createElement('a')
-    el.href = url
-    el.download = `お金の記録_${year}.csv`
-    el.click()
-    URL.revokeObjectURL(url)
-  }
-
-  const myInvs = invs.filter((v) => v.member_id === me.id)
-  const monthExpenses = expenses.filter((e) => e.occurred_on.startsWith(month))
-  const monthPaid = invs.filter((v) => v.month === month && v.status === 'paid')
-
-  // 稼働管理表と同じExcel風テーブルで経費を一覧する
-  const expenseTable = (rows: MoneyExpense[], showName: boolean) => (
-    <div className="plan-table-wrap">
-      <table className="plan-table">
-        <thead>
-          <tr>
-            <th>日付</th>{showName && <th>メンバー</th>}<th>項目</th><th>金額</th><th>区分</th><th>状態</th><th>レシート</th><th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((e) => {
-            const mine = e.member_id === me.id // 自分の行はセルを直接編集できる（Excel風）
-            return (
-            <tr key={e.id}
-              onContextMenu={mine ? (ev) => { ev.preventDefault(); removeExpense(e) } : undefined}>
-              <td className={mine ? 'pt-cell' : 'pt-date'}>
-                {mine ? (
-                  <input type="date" className="pt-mini pt-mini-date" aria-label="日付"
-                    key={`d-${e.id}-${e.occurred_on}`} defaultValue={e.occurred_on}
-                    onBlur={(ev) => { const v = ev.target.value; if (v && v !== e.occurred_on) updateExpense(e.id, { occurred_on: v }) }} />
-                ) : e.occurred_on.slice(5).replace('-', '/')}
-                {e.amount === 0 && <span className="badge badge-yellow">金額未入力</span>}
-              </td>
-              {showName && <td className="pt-cell">{names[e.member_id] ?? '—'}</td>}
-              <td className="pt-cell">
-                {mine ? (
-                  <input type="text" className="pt-mini" placeholder="項目" aria-label="項目"
-                    key={`l-${e.id}-${e.label}`} defaultValue={e.label}
-                    onBlur={(ev) => { const v = ev.target.value.trim(); if (v && v !== e.label) updateExpense(e.id, { label: v }) }} />
-                ) : e.label}
-              </td>
-              <td className="pt-cell pt-yen">
-                {mine ? (
-                  <CellNum value={e.amount} label="金額" placeholder="金額"
-                    onCommit={(v) => { if (v > 0) updateExpense(e.id, { amount: v }) }} />
-                ) : yen(e.amount)}
-              </td>
-              <td className="pt-cell">
-                {mine ? (
-                  <select aria-label="区分" key={`s-${e.id}-${e.scope}`} className="pt-mini" defaultValue={e.scope}
-                    onChange={(ev) => updateExpense(e.id, { scope: ev.target.value as MoneyExpense['scope'] })}>
-                    <option value="company">会社</option>
-                    <option value="personal">個人</option>
-                  </select>
-                ) : e.scope === 'company' ? '会社' : '個人'}
-              </td>
-              <td className="pt-cell">
-                {e.scope !== 'company' ? '—'
-                  : isPresident && e.status === 'submitted' ? (
-                    <>
-                      <button className="link-btn" onClick={() => updateExpense(e.id, { status: 'approved' })}>承認</button>
-                      <button className="link-btn" style={{ color: 'var(--danger)' }}
-                        onClick={() => updateExpense(e.id, { status: 'rejected' })}>差し戻し</button>
-                    </>
-                  ) : (
-                    <span className={`badge ${e.status === 'approved' ? 'badge-blue' : e.status === 'rejected' ? 'badge-yellow' : 'badge-gray'}`}>
-                      {e.status === 'approved' ? '承認済み' : e.status === 'rejected' ? '差し戻し' : '承認待ち'}
-                    </span>
-                  )}
-              </td>
-              <td className="pt-cell">
-                {e.receipt_path && (
-                  <button className="link-btn" onClick={() => openReceipt(e.receipt_path!)}>表示</button>
-                )}
-              </td>
-              <td className="pt-cell pt-del-cell">
-                {mine && (
-                  <button className="link-btn pt-del" aria-label="削除" title="削除"
-                    onClick={() => removeExpense(e)}>✕</button>
-                )}
-              </td>
-            </tr>
-            )
-          })}
-          <TableAddRow dateKind="date" lead={showName ? 1 : 0} tail={4}
-            placeholder="項目（例: 交通費）" onAdd={addExpenseInline} />
-        </tbody>
-      </table>
-    </div>
-  )
-
-  if (!loaded) return <div className="money-mode"><div className="empty">読み込み中…</div></div>
-
-  // 初回入場 or 立場変更: お金プロフィールの作成
-  if (!profile || picking) {
-    return (
-      <div className="money-mode">
-        <div className="money-head">
-          <h1>経費管理</h1>
-          <button className="btn-outline" onClick={() => (picking ? setPicking(false) : onClose())}>閉じる</button>
-        </div>
-        <div className="card">
-          <h2>お金プロフィール <span className="tag">立場に合わせて画面が変わります</span></h2>
-          <div className="notice">あなたの立場を選んでください。あとから変更できます</div>
-          <div className="list">
-            {(Object.keys(STANCE_LABELS) as MoneyProfile['stance'][]).map((s) => (
-              <label key={s} className="list-item" style={{ cursor: 'pointer' }}>
-                <input type="radio" name="stance" checked={stance === s} onChange={() => setStance(s)} />
-                <div className="title">{STANCE_LABELS[s]}</div>
-              </label>
-            ))}
-          </div>
-          {err && <div className="notice warn">{err}</div>}
-          <button className="btn-primary" onClick={createProfile}>{profile ? '変更する' : 'はじめる'}</button>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="money-mode">
-      <div className="money-head">
-        <h1>経費管理</h1>
-        <span className="badge badge-gray">{STANCE_LABELS[profile.stance]}</span>
-        <button className="link-btn" style={{ marginLeft: 'auto' }} onClick={onClose}>✕ 閉じる</button>
-      </div>
-
-      {err && <div className="notice warn">{err}</div>}
-
-      {/* 今月のお金: 円グラフ＋カレンダー＋収支サマリー（マップはレシートOCR対応時に追加予定） */}
-      {(() => {
-        const source = isPresident
-          ? expenses.filter((e) => e.scope === 'company')
-          : expenses.filter((e) => e.member_id === me.id)
-        const [y, mo] = month.split('-').map(Number)
-        const first = new Date(y, mo - 1, 1)
-        const days = new Date(y, mo, 0).getDate()
-        const cells: (number | null)[] = [
-          ...Array(first.getDay()).fill(null),
-          ...Array.from({ length: days }, (_, i) => i + 1),
-        ]
-        const dateOf = (d: number) => `${month}-${String(d).padStart(2, '0')}`
-        const dayTotal = (d: number) =>
-          source.filter((e) => e.occurred_on === dateOf(d)).reduce((s, e) => s + e.amount, 0)
-        const dayRows = source.filter((e) => e.occurred_on === calDay)
-        // 項目（ラベル）ごとの内訳。上位5つ＋その他にまとめる
-        const monthRows = source.filter((e) => e.occurred_on.startsWith(month))
-        const monthTotal = monthRows.reduce((s, e) => s + e.amount, 0)
-        const sums = new Map<string, number>()
-        for (const e of monthRows) sums.set(e.label, (sums.get(e.label) ?? 0) + e.amount)
-        const sorted = [...sums.entries()].sort((a, b) => b[1] - a[1])
-        const groups = sorted.slice(0, 5)
-        const rest = sorted.slice(5).reduce((s, [, v]) => s + v, 0)
-        if (rest > 0) groups.push(['その他', rest])
-        let acc = 0
-        const segs = groups.map(([g, v], i) => {
-          const pct = (v / monthTotal) * 100
-          const seg = { g, v, pct, offset: acc, color: AVATAR_COLORS[i % AVATAR_COLORS.length] }
-          acc += pct
-          return seg
-        })
-        const moveMonth = (d: number) => {
-          setMonth(new Date(y, mo - 1 + d, 1).toLocaleDateString('sv-SE').slice(0, 7))
-          setCalDay('')
-        }
-        // 収入（社長は支払った額、それ以外は自分の請求書）
-        const paidSum = monthPaid.reduce((s, v) => s + invoiceTotal(v), 0)
-        const myMonthInvs = myInvs.filter((v) => v.month === month)
-        const incomeSum = myMonthInvs.filter((v) => v.status === 'paid').reduce((s, v) => s + invoiceTotal(v), 0)
-          + incomes.filter((i) => i.month === month).reduce((s, i) => s + i.amount, 0)
-        return (
-          <div className="card">
-            <h2>
-              お金の流れ <span className="tag">{isPresident ? '会社のお金' : '自分のお金'}</span>
-              <span className="month-nav">
-                <button aria-label="前の月" onClick={() => moveMonth(-1)}>◀</button>
-                <b>{y}年{mo}月</b>
-                <button aria-label="次の月" onClick={() => moveMonth(1)}>▶</button>
-              </span>
-            </h2>
-            <div className="money-top">
-              <svg viewBox="0 0 42 42" className="money-donut" role="img" aria-label="支出の内訳">
-                {monthTotal > 0 ? segs.map((s) => (
-                  <circle key={s.g} cx="21" cy="21" r="15.9155" fill="none"
-                    stroke={s.color} strokeWidth="7"
-                    strokeDasharray={`${s.pct} ${100 - s.pct}`}
-                    strokeDashoffset={25 - s.offset} />
-                )) : (
-                  <circle cx="21" cy="21" r="15.9155" fill="none" stroke="var(--line)" strokeWidth="7" />
-                )}
-                <text x="21" y="20" textAnchor="middle" className="money-donut-total">{yen(monthTotal)}</text>
-                <text x="21" y="25" textAnchor="middle" className="money-donut-sub">支出</text>
-              </svg>
-              <div className="cal-grid money-cal">
-                {['日', '月', '火', '水', '木', '金', '土'].map((w) => (
-                  <div key={w} className="cal-wday">{w}</div>
-                ))}
-                {cells.map((d, i) =>
-                  d === null ? <div key={i} /> : (
-                    <button key={i} className={`cal-day ${dateOf(d) === calDay ? 'sel' : ''}`}
-                      onClick={() => setCalDay(calDay === dateOf(d) ? '' : dateOf(d))}>
-                      {d}
-                      <span className="cal-dots">{dayTotal(d) > 0 && <i className="dot-me" />}</span>
-                    </button>
-                  )
-                )}
-              </div>
-            </div>
-            {calDay && (
-              dayRows.length === 0
-                ? <div className="empty">{calDay.slice(5).replace('-', '/')} の支出はありません</div>
-                : expenseTable(dayRows, isPresident)
-            )}
-            {isPresident ? (
-              <>
-                <div className="log-row">
-                  <span className="d">支払</span>
-                  <span className="t">メンバーへの支払済み {monthPaid.length}件</span>
-                  <span className="dur">{yen(paidSum)}</span>
-                </div>
-                {/* 月間経費予算と使用状況 */}
-                <div className="log-row">
-                  <span className="d">予算</span>
-                  <span className="t">
-                    月の経費予算
-                    <input type="text" inputMode="numeric" className="pt-mini" style={{ marginLeft: 8, width: 110 }}
-                      key={`budget-${budget}`} defaultValue={budget ?? ''} placeholder="未設定"
-                      aria-label="月の経費予算" onBlur={(ev) => saveBudget(ev.target.value)} />
-                  </span>
-                  {budget ? <span className="dur">残り {yen(Math.max(0, budget - monthTotal))}</span> : null}
-                </div>
-                {budget != null && budget > 0 && monthTotal >= budget * 0.8 && (
-                  <div className="notice warn">
-                    経費が予算の{Math.round((monthTotal / budget) * 100)}%に達しています（{yen(monthTotal)} / {yen(budget)}）
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                <div className="log-row">
-                  <span className="d">収入</span>
-                  <span className="t">
-                    この月の請求書
-                    {myMonthInvs.length === 0 ? ' なし'
-                      : myMonthInvs.some((v) => v.status !== 'paid') ? '（支払待ちあり）' : '（支払済み）'}
-                  </span>
-                  <span className="dur">{yen(incomeSum)}</span>
-                </div>
-                {profile.stance === 'sole_proprietor' && (() => {
-                  // 月次収支: 収入−経費。前月と比較
-                  const prevMonth = new Date(y, mo - 2, 1).toLocaleDateString('sv-SE').slice(0, 7)
-                  const prevExp = source.filter((e) => e.occurred_on.startsWith(prevMonth)).reduce((s, e) => s + e.amount, 0)
-                  const prevInc = myInvs.filter((v) => v.month === prevMonth && v.status === 'paid').reduce((s, v) => s + invoiceTotal(v), 0)
-                    + incomes.filter((i) => i.month === prevMonth).reduce((s, i) => s + i.amount, 0)
-                  const profit = incomeSum - monthTotal
-                  const prevProfit = prevInc - prevExp
-                  const diff = profit - prevProfit
-                  return (
-                    <div className="log-row">
-                      <span className="d">利益</span>
-                      <span className="t">収入 − 経費（前月 {yen(prevProfit)}、{diff >= 0 ? '+' : '−'}{yen(Math.abs(diff)).slice(1)}円）</span>
-                      <span className="dur">{yen(profit)}</span>
-                    </div>
-                  )
-                })()}
-              </>
-            )}
-            {monthTotal > 0 && (
-              <details className="money-detail">
-                <summary>項目別の内訳を見る</summary>
-                <div className="money-legend">
-                  {segs.map((s) => (
-                    <div key={s.g} className="money-legend-row">
-                      <i style={{ background: s.color }} />
-                      <span className="g">{s.g}</span>
-                      <span className="pct">{Math.round(s.pct)}%</span>
-                      <span className="v">{yen(s.v)}</span>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )}
-            {!isPresident && myInvs.length > 0 && (
-              <details className="money-detail">
-                <summary>収入の明細（請求書の支払状況）</summary>
-                <div className="list">
-                  {myInvs.map((v) => (
-                    <div key={v.id} className="list-item">
-                      <div className="when">{v.month.replace('-', '/')}</div>
-                      <div className="title">{yen(invoiceTotal(v))}</div>
-                      <span className={`badge ${v.status === 'paid' ? 'badge-blue' : 'badge-gray'}`}>
-                        {v.status === 'paid' ? '支払済み' : '支払待ち'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )}
-            {(() => {
-              const pins = monthRows.filter((e) => e.lat != null && e.lng != null)
-              return pins.length > 0 && (
-                <details className="money-detail">
-                  <summary>支出マップ（{pins.length}件）</summary>
-                  <ExpenseMap rows={pins} />
-                  <div className="notice">レシート読み取りで住所が取れた経費だけ表示されます</div>
-                </details>
-              )
-            })()}
-          </div>
-        )
-      })()}
-
-      {/* カレンダー下の切り替え: 年間の収支確認 / 経費の登録 */}
-      <div className="seg-row money-view-toggle" role="tablist" aria-label="表示切替">
-        <button role="tab" aria-selected={moneyView === 'entry'}
-          className={`preset-chip ${moneyView === 'entry' ? 'sel' : ''}`}
-          onClick={() => setMoneyView('entry')}>経費の登録</button>
-        <button role="tab" aria-selected={moneyView === 'year'}
-          className={`preset-chip ${moneyView === 'year' ? 'sel' : ''}`}
-          onClick={() => setMoneyView('year')}>年間の収支</button>
-      </div>
-
-      {/* 年間の収支: 月ごとの売上・経費と扶養の壁チェック（自分個人の収支なので全立場で表示） */}
-      {moneyView === 'year' && (() => {
-        const year = month.slice(0, 4)
-        const incomeOf = (m: string) =>
-          myInvs.filter((v) => v.month === m && v.status === 'paid').reduce((s, v) => s + invoiceTotal(v), 0)
-          + incomes.filter((i) => i.month === m).reduce((s, i) => s + i.amount, 0)
-        const expenseOf = (m: string) =>
-          expenses.filter((e) => e.member_id === me.id && e.occurred_on.startsWith(m)).reduce((s, e) => s + e.amount, 0)
-        const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`)
-        const yearIncome = months.reduce((s, m) => s + incomeOf(m), 0)
-        const yearExpense = months.reduce((s, m) => s + expenseOf(m), 0)
-        // 壁チェック: 今のペース＝経過月の平均×12。年をまたいで見ている場合は12ヶ月確定
-        const wall = profile.wall_amount
-        const monthsElapsed = year === today().slice(0, 4) ? Number(today().slice(5, 7)) : 12
-        const projected = monthsElapsed > 0 ? Math.round((yearIncome / monthsElapsed) * 12) : 0
-        const manYen = (v: number) => v % 10000 === 0 ? `${v / 10000}万円` : yen(v)
-        const wallLabel = wall ? (WALLS.find(([a]) => a === wall)?.[1] ?? manYen(wall)).split(':')[0] : ''
-        // QA: 答えに応じて推奨の壁を出す
-        const qaSteps = [
-          { q: '親や配偶者の扶養に入っていますか？', yes: { step: 1 }, no: { step: 9, rec: null, note: '扶養に入っていなければ、壁は気にせず稼いでOKです' } },
-          { q: '学生ですか？', yes: { step: 9, rec: 1300000, note: '学生は所得税側の控除が150万円まで広がりましたが、親の社会保険の扶養から外れる130万円が先に来ます' }, no: { step: 2 } },
-          { q: '勤務先は従業員51人以上で、週20時間以上働いていますか？', yes: { step: 9, rec: 1060000, note: 'この条件だと106万円前後で社会保険の加入対象になります' }, no: { step: 9, rec: 1230000, note: '所得税がかかり始める123万円が目安です（社会保険は130万円）' } },
-        ]
-        return (
-          <div className="card">
-            <h2>年間の収支 <span className="tag">{year}年 · 売上と経費の照合</span></h2>
-            <div className="money-year-grid">
-            <div className="plan-table-wrap">
-              <table className="plan-table">
-                <thead><tr><th>月</th><th>売上</th><th>経費</th><th>差引</th></tr></thead>
-                <tbody>
-                  {months.map((m) => {
-                    const inc = incomeOf(m), exp = expenseOf(m)
-                    // セルを押してそのまま入力（稼働表と同じ）。過去の月もOK
-                    return (
-                      <tr key={m}>
-                        <td className="pt-date">{Number(m.slice(5))}月</td>
-                        <td className="pt-cell pt-yen">
-                          <CellNum value={inc} label={`${Number(m.slice(5))}月の売上`}
-                            onCommit={(v) => setMonthIncome(m, v, inc)} />
-                        </td>
-                        <td className="pt-cell pt-yen">
-                          <CellNum value={exp} label={`${Number(m.slice(5))}月の経費`}
-                            onCommit={(v) => setMonthExpense(m, v, exp)} />
-                        </td>
-                        <td className="pt-cell pt-yen">{inc || exp ? yen(inc - exp) : '—'}</td>
-                      </tr>
-                    )
-                  })}
-                  <tr>
-                    <td className="pt-date"><b>合計</b></td>
-                    <td className="pt-cell pt-yen"><b>{yen(yearIncome)}</b></td>
-                    <td className="pt-cell pt-yen"><b>{yen(yearExpense)}</b></td>
-                    <td className="pt-cell pt-yen"><b>{yen(yearIncome - yearExpense)}</b></td>
-                  </tr>
-                  {/* 売上（請求書以外の収入）は表の最下行から直接追加 */}
-                  <TableAddRow dateKind="month" tail={1}
-                    placeholder="売上項目（例: バイト代）" onAdd={addIncome} />
-                </tbody>
-              </table>
-            </div>
-            {/* 右: 月別の売上・経費グラフ */}
-            <div className="money-year-chart-wrap">
-              {(() => {
-                const maxV = Math.max(1, ...months.map((m) => Math.max(incomeOf(m), expenseOf(m))))
-                const h = (v: number) => (v / maxV) * 170
-                return (
-                  <svg viewBox="0 0 380 220" className="money-year-chart" role="img"
-                    aria-label={`${year}年の月別売上と経費のグラフ`}>
-                    {months.map((m, i) => {
-                      const inc = incomeOf(m), exp = expenseOf(m)
-                      const x = 12 + i * 30
-                      return (
-                        <g key={m}>
-                          <rect x={x} y={195 - h(inc)} width={12} height={h(inc)} rx={2} fill="#007f66" />
-                          <rect x={x + 13} y={195 - h(exp)} width={12} height={h(exp)} rx={2} fill="#c2447e" />
-                          <text x={x + 13} y={210} textAnchor="middle" fontSize="10" fill="currentColor" opacity=".6">
-                            {Number(m.slice(5))}
-                          </text>
-                        </g>
-                      )
-                    })}
-                  </svg>
-                )
-              })()}
-              <div className="money-legend-row" style={{ justifyContent: 'center' }}>
-                <i style={{ background: '#007f66' }} /><span className="g">売上</span>
-                <i style={{ background: '#c2447e', marginLeft: 12 }} /><span className="g">経費</span>
-              </div>
-
-              {/* グラフ下のサマリー: 利益・月平均・扶養の壁 */}
-              <div className="log-row">
-                <span className="d">利益</span>
-                <span className="t">{year}年の売上 − 経費</span>
-                <span className="dur">{yen(yearIncome - yearExpense)}</span>
-              </div>
-              <div className="log-row">
-                <span className="d">平均</span>
-                <span className="t">月平均の売上（{monthsElapsed}ヶ月）</span>
-                <span className="dur">{yen(Math.round(yearIncome / Math.max(1, monthsElapsed)))}</span>
-              </div>
-              {/* 扶養の壁 */}
-              <h2 style={{ marginTop: 16 }}>扶養の壁 <span className="tag">年収の上限チェック</span></h2>
-              {wall ? (
-                <>
-                  <div className="log-row">
-                    <span className="d">壁</span>
-                    <span className="t">{wallLabel}の壁（{WALLS.find(([a]) => a === wall)?.[1].split(': ')[1] ?? '手動設定'}）</span>
-                    <span className="dur">{manYen(wall)}</span>
-                  </div>
-                  <div className="wall-bar" role="img" aria-label={`年収 ${yen(yearIncome)} / 壁 ${manYen(wall)}`}>
-                    <i style={{ width: `${Math.min(100, (yearIncome / wall) * 100)}%`,
-                      background: yearIncome >= wall ? 'var(--danger)' : projected > wall ? '#c2691c' : 'var(--brand, #00654f)' }} />
-                  </div>
-                  {yearIncome >= wall ? (
-                    <div className="notice warn">{year}年の売上が{manYen(wall)}を超えています（{yen(yearIncome)}）</div>
-                  ) : (
-                    <div className="log-row">
-                      <span className="d">残り</span>
-                      <span className="t">{year}年はあと稼げる額</span>
-                      <span className="dur">{yen(wall - yearIncome)}</span>
-                    </div>
-                  )}
-                  {yearIncome < wall && projected > wall && (
-                    <div className="notice warn">
-                      今のペース（月平均{yen(Math.round(yearIncome / Math.max(1, monthsElapsed)))}）だと
-                      年間{yen(projected)}になり、{wallLabel}の壁を越えそうです。
-                      残り{12 - monthsElapsed}ヶ月は月{yen(Math.max(0, Math.floor((wall - yearIncome) / Math.max(1, 12 - monthsElapsed))))}以内が目安です
-                    </div>
-                  )}
-                  <button className="link-btn" onClick={() => setWallQA({ step: 0 })}>壁を診断し直す</button>
-                </>
-              ) : (
-                !wallQA && (
-                  <>
-                    <div className="notice">
-                      {profile.wall_amount === null && 'いくらまで稼いでいいか、いくつかの質問で診断できます'}
-                    </div>
-                    <button className="btn-outline" onClick={() => setWallQA({ step: 0 })}>壁を診断する</button>
-                  </>
-                )
-              )}
-              {wallQA && (wallQA.step < 9 ? (
-                <div className="wall-qa">
-                  <div className="notice">{qaSteps[wallQA.step].q}</div>
-                  <div className="draft-times">
-                    <button className="btn-outline" onClick={() => setWallQA(qaSteps[wallQA.step].yes)}>はい</button>
-                    <button className="btn-outline" onClick={() => setWallQA(qaSteps[wallQA.step].no)}>いいえ</button>
-                    <button className="link-btn" onClick={() => setWallQA(null)}>やめる</button>
-                  </div>
-                </div>
-              ) : (
-                <div className="wall-qa">
-                  <div className="notice">
-                    {wallQA.rec ? `おすすめの壁: ${manYen(wallQA.rec)}。` : ''}{wallQA.note}
-                  </div>
-                  <div className="draft-times" style={{ flexWrap: 'wrap' }}>
-                    {wallQA.rec != null && (
-                      <button className="btn-primary" style={{ margin: 0 }}
-                        onClick={() => saveWall(wallQA.rec!)}>{manYen(wallQA.rec)}で設定</button>
-                    )}
-                    {wallQA.rec == null && (
-                      <button className="btn-primary" style={{ margin: 0 }} onClick={() => saveWall(null)}>壁なしにする</button>
-                    )}
-                    <button className="link-btn" onClick={() => setWallQA(null)}>やめる</button>
-                  </div>
-                  <details className="money-detail">
-                    <summary>自分で壁を選ぶ</summary>
-                    <div className="list">
-                      {WALLS.map(([a, desc]) => (
-                        <div key={a} className="list-item">
-                          <div className="title">{desc}</div>
-                          <button className="link-btn" onClick={() => saveWall(a)}>設定</button>
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                </div>
-              ))}
-            </div>
-            </div>
-            <div className="notice">請求書（支払済み）は自動で売上に入ります。売上・経費のセルは押してそのまま入力できます</div>
-            {incomes.filter((i) => i.month.startsWith(year)).length > 0 && (
-              <details className="money-detail">
-                <summary>手入力した売上（{incomes.filter((i) => i.month.startsWith(year)).length}件）</summary>
-                <div className="list">
-                  {incomes.filter((i) => i.month.startsWith(year)).map((i) => (
-                    <div key={i.id} className="list-item">
-                      <div className="when">{i.month.replace('-', '/')}</div>
-                      <div className="title">{i.label}</div>
-                      <span className="dur">{yen(i.amount)}</span>
-                      <button className="link-btn" onClick={() => removeIncome(i)}>削除</button>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )}
-
-          </div>
-        )
-      })()}
-
-      {/* 経費: 登録フォームと一覧をひとつのカードに */}
-      {moneyView === 'entry' && <div className="card">
-        <h2>
-          経費 <span className="tag">{isPresident ? '会社経費の一覧と登録' : '登録と一覧'}</span>
-          <span className="month-nav">
-            <div className="goal-menu">
-              <button className="icon-btn goal-menu-btn" aria-label="経費メニュー" aria-expanded={menuOpen}
-                onClick={() => setMenuOpen(!menuOpen)}>☰</button>
-              {menuOpen && (
-                <div className="goal-menu-pop" role="menu">
-                  <button role="menuitem" onClick={() => { setMenuOpen(false); exportMoneyCsv() }}>
-                    {month.slice(0, 4)}年のCSVを出力
-                  </button>
-                  <button role="menuitem" onClick={() => { setMenuOpen(false); setStance(profile.stance); setPicking(true) }}>
-                    立場を変更
-                  </button>
-                </div>
-              )}
-            </div>
-          </span>
-        </h2>
-        <div className="seg-row" role="tablist" aria-label="経費の区分">
-          <button role="tab" aria-selected={scope === 'company'}
-            className={`preset-chip ${scope === 'company' ? 'sel' : ''}`}
-            onClick={() => setScope('company')}>会社に提出</button>
-          <button role="tab" aria-selected={scope === 'personal'}
-            className={`preset-chip ${scope === 'personal' ? 'sel' : ''}`}
-            onClick={() => setScope('personal')}>個人の帳簿</button>
-        </div>
-        <div className="draft-times" style={{ flexWrap: 'wrap' }}>
-          <input type="date" aria-label="日付" style={{ width: 150 }}
-            value={date} onChange={(e) => setDate(e.target.value)} />
-          <input type="text" placeholder="項目（例: 交通費）" style={{ flex: 1, minWidth: 140 }}
-            value={label} onChange={(e) => setLabel(e.target.value)} />
-          <input type="text" inputMode="numeric" placeholder="金額" style={{ width: 90 }}
-            value={amount} onChange={(e) => setAmount(e.target.value)} />
-        </div>
-        <div className="draft-times" style={{ flexWrap: 'wrap' }}>
-          <label className="btn-outline" style={{ cursor: 'pointer', margin: 0 }}>
-            {ocr ? '🔍 読み取り中…' : file ? `📎 ${file.name}` : '📷 レシートを撮影'}
-            <input type="file" accept="image/*" capture="environment" hidden
-              onChange={(e) => pickReceipt(e.target.files?.[0] ?? null)} />
-          </label>
-          <label className="link-btn" style={{ cursor: 'pointer' }}>
-            ファイルを選択
-            <input type="file" accept="image/*,.pdf" hidden
-              onChange={(e) => pickReceipt(e.target.files?.[0] ?? null)} />
-          </label>
-          {myInvs.length > 0 && (
-            <select aria-label="請求書に紐付け" value={linkInv} onChange={(e) => setLinkInv(e.target.value)}>
-              <option value="">請求書に紐付けない</option>
-              {myInvs.map((v) => (
-                <option key={v.id} value={v.id}>{v.month.replace('-', '年')}月分の請求書</option>
-              ))}
-            </select>
-          )}
-          <button className="btn-primary" style={{ margin: '0 0 0 auto' }}
-            disabled={busy || !label || !Number(amount)} onClick={addExpense}>
-            {busy ? '登録中…' : '登録'}
-          </button>
-        </div>
-        <div className="notice">
-          {scope === 'company'
-            ? '「会社に提出」は管理者にレシートごと共有され、経費精算・請求書の裏付けになります'
-            : '「個人の帳簿」は自分だけが見られる記録です（確定申告用など）'}
-        </div>
-        {(() => {
-          const rows = isPresident
-            ? monthExpenses.filter((e) => e.scope === 'company')
-            : expenses.filter((e) => e.member_id === me.id)
-          return rows.length === 0
-            ? <div className="empty">経費はまだありません</div>
-            : expenseTable(rows, isPresident)
-        })()}
-        <details className="money-detail">
-          <summary>固定費・定期支出（毎月自動で経費に追加）{recurring.filter((r) => r.active).length > 0 && ` · ${recurring.filter((r) => r.active).length}件`}</summary>
-          {recurring.length > 0 && (
-            <div className="list" style={{ marginBottom: 8 }}>
-              {recurring.map((r) => (
-                <div key={r.id} className="list-item" style={r.active ? undefined : { opacity: .5 }}>
-                  <div className="when">毎月{r.day_of_month}日</div>
-                  <div className="title">{r.label}（{r.scope === 'company' ? '会社' : '個人'}）</div>
-                  <span className="dur">{yen(r.amount)}</span>
-                  <button className="link-btn" onClick={() => toggleRecurring(r)}>{r.active ? '停止' : '再開'}</button>
-                  <button className="link-btn" onClick={() => removeRecurring(r)}>削除</button>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="draft-times" style={{ flexWrap: 'wrap' }}>
-            <input type="text" placeholder="項目（例: 家賃）" style={{ flex: 1, minWidth: 120 }}
-              value={recLabel} onChange={(e) => setRecLabel(e.target.value)} />
-            <input type="text" inputMode="numeric" placeholder="金額" style={{ width: 90 }}
-              value={recAmount} onChange={(e) => setRecAmount(e.target.value)} />
-            <label style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
-              毎月
-              <input type="number" min={1} max={28} style={{ width: 60 }}
-                value={recDay} onChange={(e) => setRecDay(e.target.value)} />
-              日
-            </label>
-            <button className="btn-outline" disabled={!recLabel || !Number(recAmount)} onClick={addRecurring}>追加</button>
-          </div>
-          <div className="notice">区分は上の「会社に提出 / 個人の帳簿」の選択が使われます。経費行はその月に入ってから自動生成されます</div>
-        </details>
-      </div>}
-
-      {isPresident && (
-        <div className="card">
-          <h2>メンバーへの支払い <span className="tag">給与・委託報酬（請求書）</span></h2>
-          {invs.length === 0 ? <div className="empty">請求書はまだありません</div> : (
-            <div className="list">
-              {invs.map((v) => (
-                <div key={v.id} className="list-item">
-                  <div className="when">{v.month.replace('-', '/')}</div>
-                  <div className="title">{names[v.member_id] ?? '—'} · {yen(invoiceTotal(v))}</div>
-                  {v.status === 'paid' ? (
-                    <span className="badge badge-blue">支払済み</span>
-                  ) : (
-                    <button className="btn-primary" style={{ margin: 0 }} onClick={() => markPaid(v)}>支払済みにする</button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
 
 /* ---------- 名簿 ---------- */
 // MyHood swatch palette（塗り専用。白文字が乗るので濃色寄りに調整）
@@ -2295,7 +910,7 @@ const AVATAR_COLORS = ['#007f66', '#2F8CFF', '#7c5cd6', '#0f8a7e', '#c2447e', '#
 
 const BLANK_INVITE = { name: '', email: '', work_start: '09:00', work_end: '18:00' }
 
-function Members({ me, onOpenProfile }: { me: Member; onOpenProfile?: (m: Member) => void }) {
+function Members({ me }: { me: Member }) {
   const [members, setMembers] = useState<Member[]>([])
   const [code, setCode] = useState('')
   const [copied, setCopied] = useState(false)
@@ -2303,24 +918,16 @@ function Members({ me, onOpenProfile }: { me: Member; onOpenProfile?: (m: Member
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(BLANK_INVITE)
   const [busy, setBusy] = useState(false)
-  const [myhood, setMyhood] = useState('')
-  const [myhoodMsg, setMyhoodMsg] = useState('')
-  const [month, setMonth] = useState(today().slice(0, 7)) // "YYYY-MM"
-  const [invs, setInvs] = useState<Invoice[]>([])
-  const [invView, setInvView] = useState<Invoice | null>(null)
+  const [detail, setDetail] = useState<string | null>(null) // 詳細設定を開いているメンバー
   const isAdmin = me.role === 'admin'
 
   const load = useCallback(async () => {
-    const [{ data: rows }, { data: company }, { data: invRows }] = await Promise.all([
+    const [{ data: rows }, { data: company }] = await Promise.all([
       supabase.from('members').select('*').eq('company_id', me.company_id).order('created_at'),
-      supabase.from('companies').select('join_code, myhood_url').eq('id', me.company_id).maybeSingle(),
-      supabase.from('invoices').select('*').order('issued_at', { ascending: false }),
+      supabase.from('companies').select('join_code').eq('id', me.company_id).maybeSingle(),
     ])
-    setMembers(rows ?? [])
+    setMembers(((rows as Member[]) ?? []).filter((m) => m.status !== 'disabled'))
     setCode(company?.join_code ?? '')
-    setMyhood((company as { myhood_url?: string | null } | null)?.myhood_url ?? '')
-    const ids = new Set(((rows as Member[]) ?? []).map((m) => m.id))
-    setInvs(((invRows as Invoice[]) ?? []).filter((v) => ids.has(v.member_id)))
   }, [me.company_id])
 
   useEffect(() => { load() }, [load])
@@ -2331,24 +938,20 @@ function Members({ me, onOpenProfile }: { me: Member; onOpenProfile?: (m: Member
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const changeHours = async (m: Member, key: 'work_start' | 'work_end', value: string) => {
-    setMembers(members.map((x) => (x.id === m.id ? { ...x, [key]: value } : x)))
-    const { error } = await supabase.from('members').update({ [key]: value }).eq('id', m.id)
-    if (error) setErr('所定時間を変更できませんでした')
+  // 時給制は hourly_rate、月額契約は contract_amount（nullなら時給制）
+  const changePay = async (m: Member, patch: Pick<Member, 'hourly_rate'> | Pick<Member, 'contract_amount'>) => {
+    setMembers(members.map((x) => (x.id === m.id ? { ...x, ...patch } : x)))
+    const { error } = await supabase.from('members').update(patch).eq('id', m.id)
+    if (error) setErr('時給額/契約金額を変更できませんでした')
   }
 
-  const changeRate = async (m: Member, value: string) => {
-    const rate = Math.max(0, Number(value) || 0)
-    setMembers(members.map((x) => (x.id === m.id ? { ...x, hourly_rate: rate } : x)))
-    const { error } = await supabase.from('members').update({ hourly_rate: rate }).eq('id', m.id)
-    if (error) setErr('時給を変更できませんでした')
-  }
-
-  const markPaid = async (inv: Invoice) => {
+  // 削除は status='disabled' にするだけ（勤怠記録は残す）。名簿・ログイン・タイムカードから外れる
+  const remove = async (m: Member) => {
+    if (!confirm(`${m.name}さんをメンバーから削除しますか？\n（これまでの勤怠記録は残ります）`)) return
     setErr('')
-    const { error } = await supabase.from('invoices')
-      .update({ status: 'paid', paid_at: new Date().toISOString() }).eq('id', inv.id)
-    if (error) return setErr(`更新できませんでした（${error.message}）`)
+    const { error } = await supabase.from('members').update({ status: 'disabled' }).eq('id', m.id)
+    if (error) return setErr(`削除できませんでした（${error.message}）`)
+    setDetail(null)
     load()
   }
 
@@ -2359,31 +962,18 @@ function Members({ me, onOpenProfile }: { me: Member; onOpenProfile?: (m: Member
     load()
   }
 
-  const saveMyhood = async () => {
-    setMyhoodMsg('')
-    const { error } = await supabase.from('companies')
-      .update({ myhood_url: myhood || null }).eq('id', me.company_id)
-    setMyhoodMsg(error ? '保存できませんでした（管理者のみ変更可能です）' : '保存しました')
-  }
-
   const invite = async () => {
     setErr(''); setBusy(true)
     const { error } = await supabase.from('members').insert({ company_id: me.company_id, ...form })
     setBusy(false)
     if (error) {
       return setErr(error.code === '23505'
-        ? 'このメールアドレスは既に名簿に登録されています'
+        ? 'このメールアドレスは既に名簿に登録されています（削除したメンバーを含む）'
         : `招待できませんでした（${error.message}）`)
     }
     setForm(BLANK_INVITE)
     setOpen(false)
     load()
-  }
-
-  if (invView) {
-    return <InvoiceView inv={invView}
-      memberName={members.find((m) => m.id === invView.member_id)?.name ?? ''}
-      onClose={() => setInvView(null)} />
   }
 
   return (
@@ -2395,54 +985,79 @@ function Members({ me, onOpenProfile }: { me: Member; onOpenProfile?: (m: Member
             <button className="h2-action" onClick={() => setOpen(true)}>＋ 招待</button>
           )}
         </h2>
-        {members.map((m, i) => (
-          <div key={m.id} className="member-row">
-            <div className="m-avatar member-av" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
-              {m.name[0]}
-            </div>
-            <div className="m-info">
-              <div className="m-name">
-                {m.name}{m.id === me.id && <span className="you">あなた</span>}
-              </div>
-              <div className="m-mail">{m.email}</div>
-              <div className="member-tags">
-                {isAdmin ? (
-                  <select className={`role-select ${m.role === 'admin' ? 'is-admin' : ''}`} value={m.role}
-                    aria-label={`${m.name}の権限`}
-                    onChange={(e) => changeRole(m, e.target.value as Member['role'])}>
-                    <option value="member">一般</option>
-                    <option value="admin">管理者</option>
-                  </select>
-                ) : (
-                  <span className="badge badge-gray">{m.role === 'admin' ? '管理者' : '一般'}</span>
+        <div className="member-list">
+          {members.map((m, i) => {
+            const monthly = m.contract_amount != null
+            const amount = (monthly ? m.contract_amount : m.hourly_rate) ?? 0
+            const opened = detail === m.id
+            return (
+              <div key={m.id} className="member-row">
+                <div className="m-avatar member-av" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
+                  {m.name[0]}
+                </div>
+                <div className="m-info">
+                  <div className="m-name">
+                    {m.name}{m.id === me.id && <span className="you">あなた</span>}
+                  </div>
+                  <div className="m-mail">{m.email}</div>
+                  <div className="member-tags">
+                    {isAdmin ? (
+                      <select className={`role-select ${m.role === 'admin' ? 'is-admin' : ''}`} value={m.role}
+                        aria-label={`${m.name}の権限`}
+                        onChange={(e) => changeRole(m, e.target.value as Member['role'])}>
+                        <option value="member">一般</option>
+                        <option value="admin">管理者</option>
+                      </select>
+                    ) : (
+                      <span className="badge badge-gray">{m.role === 'admin' ? '管理者' : '一般'}</span>
+                    )}
+                    {m.status === 'invited' && <span className="badge badge-yellow">招待中・未参加</span>}
+                  </div>
+                </div>
+                <div className="m-pay">
+                  <span className="m-pay-kind">{monthly ? '月額' : '時給'}</span>
+                  <b className={`m-pay-amount ${amount > 0 ? '' : 'unset'}`}>{amount > 0 ? yen(amount) : '未設定'}</b>
+                  {isAdmin && (
+                    <button className="link-btn" aria-expanded={opened}
+                      onClick={() => setDetail(opened ? null : m.id)}>{opened ? '閉じる' : '詳細設定'}</button>
+                  )}
+                </div>
+                {opened && (
+                  <div className="m-detail">
+                    <div className="m-detail-row">
+                      <span className="m-detail-label">給与形態</span>
+                      <div className="seg-row" role="group" aria-label={`${m.name}の給与形態`}>
+                        <button className={`preset-chip ${monthly ? '' : 'sel'}`} aria-pressed={!monthly}
+                          onClick={() => monthly && changePay(m, { contract_amount: null })}>時給</button>
+                        <button className={`preset-chip ${monthly ? 'sel' : ''}`} aria-pressed={monthly}
+                          onClick={() => !monthly && changePay(m, { contract_amount: 0 })}>月額</button>
+                      </div>
+                    </div>
+                    <div className="m-detail-row">
+                      <span className="m-detail-label">金額</span>
+                      <div className="m-yen">
+                        ¥
+                        <input type="text" inputMode="numeric" placeholder="0"
+                          aria-label={`${m.name}の${monthly ? '契約金額（月額）' : '時給'}`}
+                          value={amount || ''}
+                          onChange={(e) => {
+                            const v = Math.max(0, Number(e.target.value.replace(/[,¥\s]/g, '')) || 0)
+                            changePay(m, monthly ? { contract_amount: v } : { hourly_rate: v })
+                          }} />
+                        {monthly ? '/ 月' : '/ 時間'}
+                      </div>
+                    </div>
+                    {m.id !== me.id && (
+                      <div className="m-detail-foot">
+                        <button className="m-delete" onClick={() => remove(m)}>このメンバーを削除</button>
+                      </div>
+                    )}
+                  </div>
                 )}
-                {m.status === 'invited' && <span className="badge badge-yellow">招待中・未参加</span>}
-                {onOpenProfile && m.id !== me.id && m.status === 'active' && (
-                  <button className="btn-chip" onClick={() => onOpenProfile(m)}>プロフィール</button>
-                )}
               </div>
-            </div>
-            <div className="m-hours">
-              <span className="m-hours-label">所定勤務</span>
-              <div>
-                <input type="time" value={hm(m.work_start)} disabled={!isAdmin}
-                  aria-label={`${m.name}の所定勤務開始`}
-                  onChange={(e) => changeHours(m, 'work_start', e.target.value)} />
-                <span> – </span>
-                <input type="time" value={hm(m.work_end)} disabled={!isAdmin}
-                  aria-label={`${m.name}の所定勤務終了`}
-                  onChange={(e) => changeHours(m, 'work_end', e.target.value)} />
-              </div>
-              <span className="m-hours-label" style={{ marginTop: 6 }}>時給（0=給与制）</span>
-              <div>
-                <span>¥ </span>
-                <input type="text" inputMode="numeric" className="rate-input"
-                  aria-label={`${m.name}の時給`} value={m.hourly_rate || 0} disabled={!isAdmin}
-                  onChange={(e) => changeRate(m, e.target.value)} />
-              </div>
-            </div>
-          </div>
-        ))}
+            )
+          })}
+        </div>
         {err && !open && <div className="notice warn">{err}</div>}
         {isAdmin && (
           <div className="join-code-subtle">
@@ -2464,19 +1079,10 @@ function Members({ me, onOpenProfile }: { me: Member; onOpenProfile?: (m: Member
           <input id="iv-mail" type="email" placeholder="you@example.com"
             value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
 
-          <label>所定勤務時間帯</label>
-          <div className="draft-times">
-            <input type="time" aria-label="所定勤務開始" value={form.work_start}
-              onChange={(e) => setForm({ ...form, work_start: e.target.value })} />
-            <span>–</span>
-            <input type="time" aria-label="所定勤務終了" value={form.work_end}
-              onChange={(e) => setForm({ ...form, work_end: e.target.value })} />
-          </div>
-
           {err && <div className="notice warn">{err}</div>}
           <div className="notice">
             メールアドレスが分かっている人向けです。登録したアドレスでアカウントを作成すると自動で参加し、
-            ここで設定した名前と所定勤務時間帯が引き継がれます。
+            ここで設定した名前が引き継がれます。
             アドレスが分からない場合は名簿の下にある参加コードを共有してください
           </div>
           <div className="form-actions">
@@ -2488,181 +1094,12 @@ function Members({ me, onOpenProfile }: { me: Member; onOpenProfile?: (m: Member
           </div>
         </div>
       )}
-
-      {isAdmin && (
-        <div className="card">
-          <h2>MyHood連携 <span className="tag">管理者設定</span></h2>
-          <label htmlFor="mh-url">MyHoodの投稿先URL</label>
-          <input id="mh-url" type="url" placeholder="https://myhood.example.com/..."
-            value={myhood} onChange={(e) => setMyhood(e.target.value)} />
-          <div className="form-actions">
-            <button className="btn-primary" style={{ margin: 0 }} onClick={saveMyhood}>保存</button>
-          </div>
-          {myhoodMsg && <div className="notice">{myhoodMsg}</div>}
-          <div className="notice">
-            設定すると、日報と今日の予定に「MyHoodに投稿」ボタンが表示され、動画での提出ができるようになります。
-            空にして保存すると連携を解除します
-          </div>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div className="card">
-          <h2>出勤簿の出力 <span className="tag">月末のCSV出力</span></h2>
-          <div className="draft-times">
-            <input type="month" aria-label="対象月" value={month} onChange={(e) => setMonth(e.target.value)} />
-            <button className="btn-primary" style={{ margin: 0 }}
-              onClick={() => exportKintaiCsv(members, month)}>CSVをダウンロード</button>
-          </div>
-          <div className="notice">
-            全メンバーの1か月分を、現行の出勤簿スプレッドシートと同じ列構成
-            （出勤・ランチ・退勤・中抜け・総時間・実労働時間・業務内容）で出力します
-          </div>
-        </div>
-      )}
-
-      {isAdmin && invs.length > 0 && (
-        <div className="card">
-          <h2>請求書 <span className="tag">メンバーからの請求</span></h2>
-          <div className="list">
-            {invs.map((v) => (
-              <div key={v.id} className="list-item">
-                <div className="when">{v.month.replace('-', '/')}</div>
-                <div className="title">
-                  {members.find((m) => m.id === v.member_id)?.name ?? '—'} · 実働 {hmm(v.minutes)} · {yen(invoiceTotal(v))}
-                </div>
-                <button className="btn-outline" onClick={() => setInvView(v)}>表示</button>
-                {v.status === 'paid' ? (
-                  <span className="badge badge-blue">支払済み</span>
-                ) : (
-                  <button className="btn-primary" style={{ margin: 0 }} onClick={() => markPaid(v)}>支払済みにする</button>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </>
   )
 }
 
-/* ---------- 稼働と請求（プロフィール内・時給が設定されている人だけ） ---------- */
-function MyWork({ me }: { me: Member }) {
-  const [month, setMonth] = useState(today().slice(0, 7))
-  const [minutes, setMinutes] = useState(0)
-  const [inv, setInv] = useState<Invoice | null>(null) // その月の発行済み請求書
-  const [expenses, setExpenses] = useState<{ label: string; amount: number }[]>([])
-  const [expLabel, setExpLabel] = useState('')
-  const [expAmount, setExpAmount] = useState('')
-  const [view, setView] = useState(false)
-  const [err, setErr] = useState('')
-
-  const [autoExp, setAutoExp] = useState<MoneyExpense[]>([]) // 経費管理で承認済み・未請求の会社経費
-
-  const load = useCallback(async () => {
-    setMinutes(await monthWorkedMinutes(me.id, month))
-    const { from, to } = monthRange(month)
-    const [{ data }, { data: exps }] = await Promise.all([
-      supabase.from('invoices').select('*')
-        .eq('member_id', me.id).eq('month', month).maybeSingle(),
-      supabase.from('money_expenses').select('*')
-        .eq('member_id', me.id).eq('scope', 'company').eq('status', 'approved')
-        .is('invoice_id', null).gte('occurred_on', from).lt('occurred_on', to),
-    ])
-    setInv((data as Invoice | null) ?? null)
-    setAutoExp((exps as MoneyExpense[]) ?? [])
-  }, [me.id, month])
-
-  useEffect(() => { load() }, [load])
-
-  const addExpense = () => {
-    const amount = Number(expAmount)
-    if (!expLabel || !amount) return
-    setExpenses([...expenses, { label: expLabel, amount }])
-    setExpLabel(''); setExpAmount('')
-  }
-
-  const issue = async () => {
-    setErr('')
-    // 経費管理で承認済みの会社経費を自動で明細に載せる
-    const allExpenses = [...autoExp.map((e) => ({ label: e.label, amount: e.amount })), ...expenses]
-    const { data: created, error } = await supabase.from('invoices').insert({
-      member_id: me.id, month, minutes: Math.round(minutes),
-      hourly_rate: me.hourly_rate, expenses: allExpenses,
-      status: 'issued', issued_at: new Date().toISOString(), paid_at: null,
-    }).select().single()
-    if (error) return setErr(`発行できませんでした（${error.message}）`)
-    if (autoExp.length > 0 && created) {
-      await supabase.from('money_expenses')
-        .update({ invoice_id: (created as Invoice).id })
-        .in('id', autoExp.map((e) => e.id))
-    }
-    setExpenses([])
-    load()
-    setView(true)
-  }
-
-  const labor = Math.round((minutes / 60) * me.hourly_rate)
-
-  if (view && inv) return <InvoiceView inv={inv} memberName={me.name} onClose={() => setView(false)} />
-
-  return (
-    <div className="card">
-      <h2>稼働と請求 <span className="tag">実働 × 時給で請求書を発行</span></h2>
-      <div className="draft-times">
-        <input type="month" aria-label="対象月" value={month} onChange={(e) => setMonth(e.target.value)} />
-        <button className="btn-outline" onClick={() => exportKintaiCsv([me], month)}>稼働表CSV</button>
-      </div>
-      <div className="log-row">
-        <span className="d">実働</span>
-        <span className="t">{hmm(minutes)} × {yen(me.hourly_rate)}</span>
-        <span className="dur">{yen(labor)}</span>
-      </div>
-      {inv ? (
-        <>
-          <div className="notice">
-            この月の請求書は発行済みです（{inv.status === 'paid' ? '支払済み' : '支払待ち'}・合計 {yen(invoiceTotal(inv))}）
-          </div>
-          <button className="btn-primary" onClick={() => setView(true)}>請求書を表示</button>
-        </>
-      ) : (
-        <>
-          {autoExp.map((e) => (
-            <div key={e.id} className="log-row">
-              <span className="d">経費</span>
-              <span className="t">{e.label} <span className="tag">経費管理から自動</span></span>
-              <span className="dur">{yen(e.amount)}</span>
-            </div>
-          ))}
-          {expenses.map((e, i) => (
-            <div key={i} className="log-row">
-              <span className="d">経費</span>
-              <span className="t">{e.label}</span>
-              <span className="dur">{yen(e.amount)}</span>
-            </div>
-          ))}
-          <div className="draft-times" style={{ flexWrap: 'wrap' }}>
-            <input type="text" placeholder="経費の項目（例: 交通費）" style={{ width: 180 }}
-              value={expLabel} onChange={(e) => setExpLabel(e.target.value)} />
-            <input type="text" inputMode="numeric" placeholder="金額" style={{ width: 100 }}
-              value={expAmount} onChange={(e) => setExpAmount(e.target.value)} />
-            <button className="btn-outline" onClick={addExpense}>＋ 経費を追加</button>
-          </div>
-          {err && <div className="notice warn">{err}</div>}
-          <button className="btn-primary" disabled={minutes <= 0} onClick={issue}>
-            請求書を発行（{yen(labor + autoExp.reduce((s, e) => s + e.amount, 0) + expenses.reduce((s, e) => s + e.amount, 0))}）
-          </button>
-          <div className="notice">
-            発行すると管理者に届き、確認後に支払済みになります。発行時点の実働と時給で金額が確定します
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
 /* ---------- プロフィール・設定 ---------- */
-function Profile({ me, onRename, onOpenMoney }: { me: Member; onRename: (name: string) => void; onOpenMoney?: () => void }) {
+function Profile({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   return (
     <>
@@ -2675,31 +1112,12 @@ function Profile({ me, onRename, onOpenMoney }: { me: Member; onRename: (name: s
             <div className="m-mail">{me.email}</div>
             <div className="account-badges">
               <span className="badge badge-gray">{me.role === 'admin' ? '管理者' : '一般'}</span>
-              <span className="badge badge-gray">所定 {hm(me.work_start)}–{hm(me.work_end)}</span>
             </div>
           </div>
           <span className="profile-caret">{settingsOpen ? '▴' : '▾'}</span>
         </button>
-        {me.role !== 'admin' && (
-          <div className="notice">所定勤務時間帯の変更は管理者に依頼してください（打刻漏れ時の自動補完に使われます）</div>
-        )}
       </div>
-      {onOpenMoney && (
-        <div className="card">
-          <div className="link-row">
-            <div className="link-info">
-              <span style={{ fontSize: 22 }}>💰</span>
-              <div>
-                <div className="link-title">経費管理</div>
-                <div className="link-desc">経費の提出・支払管理・個人の帳簿を全画面で</div>
-              </div>
-            </div>
-            <button className="btn-primary" style={{ margin: 0 }} onClick={onOpenMoney}>開く</button>
-          </div>
-        </div>
-      )}
       {settingsOpen && <AccountSettings me={me} onRename={onRename} />}
-      {me.hourly_rate > 0 && <MyWork me={me} />}
     </>
   )
 }
@@ -2804,856 +1222,17 @@ function AccountSettings({ me, onRename }: { me: Member; onRename: (name: string
   )
 }
 
-/* ---------- 個人目標（稼働表とは別の、個人の目標管理） ---------- */
-const fmtMd = (d: string) => {
-  const dt = new Date(d + 'T00:00:00')
-  return `${dt.getMonth() + 1}/${dt.getDate()}`
-}
-// 今週=今度の日曜、今月=月末
-const weekEnd = () => {
-  const d = new Date()
-  d.setDate(d.getDate() + ((7 - d.getDay()) % 7))
-  return d.toLocaleDateString('sv-SE')
-}
-const monthEnd = () => {
-  const d = new Date()
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0).toLocaleDateString('sv-SE')
-}
-
-const BLANK_GOAL = { title: '', body: '', period: 'week' as Goal['period_type'], due: '' }
-const PERIODS: { key: Goal['period_type']; label: string }[] = [
-  { key: 'week', label: '今週' },
-  { key: 'month', label: '今月' },
-  { key: 'custom', label: '期日指定' },
-]
-
-function GoalsCard({ member, me, names, canEvaluate }: {
-  member: Member; me: Member; names: Record<string, string>; canEvaluate?: boolean
-}) {
-  const isSelf = member.id === me.id
-  const [goals, setGoals] = useState<Goal[]>([])
-  const [evals, setEvals] = useState<Record<string, GoalEvaluation[]>>({})
-  const [open, setOpen] = useState(false)
-  const [form, setForm] = useState(BLANK_GOAL)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  const [reviewFor, setReviewFor] = useState<string | null>(null)
-  const [reviewText, setReviewText] = useState('')
-  const [evalFor, setEvalFor] = useState<string | null>(null)
-  const [evalRating, setEvalRating] = useState(0)
-  const [evalText, setEvalText] = useState('')
-  const [menuFor, setMenuFor] = useState<string | null>(null)
-  const [editFor, setEditFor] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState(BLANK_GOAL)
-
-  const load = useCallback(async () => {
-    const { data } = await supabase.from('goals').select('*')
-      .eq('member_id', member.id).order('due_date')
-    const rows = (data as Goal[] | null) ?? []
-    setGoals(rows)
-    const pairs = await Promise.all(rows.map(async (g) => {
-      const { data: ev } = await supabase.from('goal_evaluations').select('*')
-        .eq('goal_id', g.id).order('created_at')
-      return [g.id, (ev as GoalEvaluation[] | null) ?? []] as const
-    }))
-    setEvals(Object.fromEntries(pairs))
-  }, [member.id])
-
-  useEffect(() => { load() }, [load])
-
-  const dueDate = form.period === 'week' ? weekEnd() : form.period === 'month' ? monthEnd() : form.due
-
-  const add = async () => {
-    setErr(''); setBusy(true)
-    const { error } = await supabase.from('goals').insert({
-      company_id: member.company_id, member_id: member.id,
-      period_type: form.period, due_date: dueDate,
-      title: form.title, body: form.body || null,
-      status: 'open', self_review: null, reviewed_at: null, google_event_id: null,
-      created_at: new Date().toISOString(),
-    }).select('id').single()
-    setBusy(false)
-    if (error) return setErr(`目標を追加できませんでした（${error.message}）`)
-    setForm(BLANK_GOAL)
-    setOpen(false)
-    load()
-  }
-
-  const removeGoal = async (g: Goal) => {
-    setMenuFor(null)
-    if (!confirm(`「${g.title}」を削除しますか？`)) return
-    const { error } = await supabase.from('goals').delete().eq('id', g.id)
-    if (error) return setErr('削除できませんでした')
-    load()
-  }
-
-  const startGoal = async (g: Goal) => {
-    const { error } = await supabase.from('goals').update({ status: 'active' }).eq('id', g.id)
-    if (error) return setErr('更新できませんでした')
-    load()
-  }
-
-  const openEdit = (g: Goal) => {
-    setMenuFor(null)
-    setEditFor(g.id)
-    setEditForm({ title: g.title, body: g.body ?? '', period: g.period_type, due: g.due_date })
-  }
-
-  const saveEdit = async (g: Goal) => {
-    setErr('')
-    const due = editForm.period === 'week' ? weekEnd() : editForm.period === 'month' ? monthEnd() : editForm.due
-    const { error } = await supabase.from('goals')
-      .update({ title: editForm.title, body: editForm.body || null, period_type: editForm.period, due_date: due })
-      .eq('id', g.id)
-    if (error) return setErr(`保存できませんでした（${error.message}）`)
-    setEditFor(null)
-    load()
-  }
-
-  const saveReview = async (g: Goal) => {
-    setErr('')
-    const { error } = await supabase.from('goals')
-      .update({ self_review: reviewText, reviewed_at: new Date().toISOString(), status: 'done' })
-      .eq('id', g.id)
-    if (error) return setErr('振り返りを保存できませんでした')
-    setReviewFor(null); setReviewText('')
-    load()
-  }
-
-  const submitEval = async (g: Goal) => {
-    setErr('')
-    const { error } = await supabase.from('goal_evaluations').insert({
-      goal_id: g.id, evaluator_member_id: me.id,
-      rating: evalRating || null, comment: evalText,
-      created_at: new Date().toISOString(),
-    })
-    if (error) return setErr(`評価を投稿できませんでした（${error.message}）`)
-    setEvalFor(null); setEvalRating(0); setEvalText('')
-    load()
-  }
-
-  const overdue = (g: Goal) => (g.status === 'open' || g.status === 'active') && g.due_date <= today()
-  // 期日バッジの色: 未着手=灰、実行中=緑、期日超過=黄、終了=灰
-  const dueBadge = (g: Goal) =>
-    overdue(g) ? 'badge-yellow' : g.status === 'active' ? 'badge-green' : 'badge-gray'
-
-  return (
-    <div className="card card-plain">
-      <h2>
-        目標 <span className="tag">今週・今月と中長期</span>
-        {isSelf && !open && <button className="h2-action" onClick={() => setOpen(true)}>＋ 目標を追加</button>}
-      </h2>
-
-      {isSelf && open && (
-        <div className="goal-form">
-          <label htmlFor="gl-title">目標</label>
-          <input id="gl-title" type="text" placeholder="例: 新規案件の見積もりを3件出す" autoFocus
-            value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-          <label htmlFor="gl-body">補足（任意）</label>
-          <input id="gl-body" type="text" placeholder="達成基準やメモ"
-            value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} />
-          <label>期間</label>
-          <div className="seg-row" role="tablist" aria-label="目標の期間">
-            {PERIODS.map((p) => (
-              <button key={p.key} role="tab" aria-selected={form.period === p.key}
-                className={`preset-chip ${form.period === p.key ? 'sel' : ''}`}
-                onClick={() => setForm({ ...form, period: p.key })}>{p.label}</button>
-            ))}
-            {form.period === 'custom' && (
-              <input type="date" aria-label="期日" value={form.due}
-                onChange={(e) => setForm({ ...form, due: e.target.value })} />
-            )}
-          </div>
-          <div className="notice">期日: {dueDate ? fmtMd(dueDate) : '未設定'}（今週=日曜、今月=月末。年末や年度末は期日指定で）</div>
-          <div className="form-actions">
-            <button className="btn-primary" style={{ margin: 0 }}
-              disabled={!form.title || !dueDate || busy} onClick={add}>
-              {busy ? '追加中…' : '追加'}
-            </button>
-            <button className="btn-outline" onClick={() => { setOpen(false); setErr('') }}>キャンセル</button>
-          </div>
-        </div>
-      )}
-
-      {goals.length === 0 && !open && (
-        <div className="notice">{isSelf ? 'まだ目標がありません。「＋ 目標を追加」から設定できます' : 'まだ目標がありません'}</div>
-      )}
-
-      <div className="list">
-        {goals.map((g) => editFor === g.id ? (
-          <div key={g.id} className="goal-item">
-            <label htmlFor={`ge-title-${g.id}`}>目標</label>
-            <input id={`ge-title-${g.id}`} type="text" autoFocus
-              value={editForm.title} onChange={(e) => setEditForm({ ...editForm, title: e.target.value })} />
-            <label htmlFor={`ge-body-${g.id}`}>補足（任意）</label>
-            <input id={`ge-body-${g.id}`} type="text" placeholder="達成基準やメモ"
-              value={editForm.body} onChange={(e) => setEditForm({ ...editForm, body: e.target.value })} />
-            <label>期間</label>
-            <div className="seg-row" role="tablist" aria-label="目標の期間">
-              {PERIODS.map((p) => (
-                <button key={p.key} role="tab" aria-selected={editForm.period === p.key}
-                  className={`preset-chip ${editForm.period === p.key ? 'sel' : ''}`}
-                  onClick={() => setEditForm({ ...editForm, period: p.key })}>{p.label}</button>
-              ))}
-              {editForm.period === 'custom' && (
-                <input type="date" aria-label="期日" value={editForm.due}
-                  onChange={(e) => setEditForm({ ...editForm, due: e.target.value })} />
-              )}
-            </div>
-            <div className="form-actions">
-              <button className="btn-primary" style={{ margin: 0 }}
-                disabled={!editForm.title || (editForm.period === 'custom' && !editForm.due)}
-                onClick={() => saveEdit(g)}>保存</button>
-              <button className="btn-outline" onClick={() => setEditFor(null)}>キャンセル</button>
-            </div>
-          </div>
-        ) : (
-          <div key={g.id} className="goal-item">
-            <div className="goal-head">
-              <span className={`badge ${dueBadge(g)}`}>
-                {g.period_type === 'week' ? '今週' : g.period_type === 'month' ? '今月' : '中長期'} · {fmtMd(g.due_date)}まで
-              </span>
-              {g.status === 'done' && <span className="badge badge-blue">達成・振り返り済み</span>}
-              {g.status === 'dropped' && <span className="badge badge-gray">取り下げ</span>}
-              {overdue(g) && <span className="badge badge-yellow">期日到来・振り返り待ち</span>}
-              {!overdue(g) && g.status === 'active' && <span className="badge badge-green">実行中</span>}
-              {!overdue(g) && g.status === 'open' && <span className="badge badge-gray">未着手</span>}
-              {isSelf && g.status === 'open' && !overdue(g) && (
-                <button className="btn-chip" onClick={() => startGoal(g)}>着手する</button>
-              )}
-              {isSelf && (g.status === 'open' || g.status === 'active') && (
-                <div className="goal-menu">
-                  <button className="icon-btn goal-menu-btn" aria-label="目標の操作" aria-expanded={menuFor === g.id}
-                    onClick={() => setMenuFor(menuFor === g.id ? null : g.id)}>⋯</button>
-                  {menuFor === g.id && (
-                    <div className="goal-menu-pop" role="menu">
-                      <button role="menuitem" onClick={() => openEdit(g)}>編集</button>
-                      <button role="menuitem" className="danger" onClick={() => removeGoal(g)}>削除</button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            <div className="goal-title">{g.title}</div>
-            {g.body && <div className="goal-body">{g.body}</div>}
-
-            {g.self_review && (
-              <div className="goal-review">
-                <span className="goal-review-label">振り返り</span>{g.self_review}
-              </div>
-            )}
-            {isSelf && !g.self_review && overdue(g) && (
-              reviewFor === g.id ? (
-                <div className="goal-review-form">
-                  <textarea rows={3} placeholder="達成度や学びを書いて振り返りましょう"
-                    value={reviewText} onChange={(e) => setReviewText(e.target.value)} />
-                  <div className="form-actions">
-                    <button className="btn-primary" style={{ margin: 0 }}
-                      disabled={!reviewText} onClick={() => saveReview(g)}>振り返りを保存</button>
-                    <button className="btn-outline" onClick={() => { setReviewFor(null); setReviewText('') }}>キャンセル</button>
-                  </div>
-                </div>
-              ) : (
-                <button className="btn-outline" onClick={() => { setReviewFor(g.id); setReviewText('') }}>振り返りを書く</button>
-              )
-            )}
-
-            {(evals[g.id] ?? []).map((ev) => (
-              <div key={ev.id} className="goal-eval">
-                <span className="goal-review-label">{names[ev.evaluator_member_id] ?? '—'}の評価</span>
-                {ev.rating != null && <span className="goal-stars">{'★'.repeat(ev.rating)}{'☆'.repeat(5 - ev.rating)}</span>}
-                {ev.comment}
-              </div>
-            ))}
-            {canEvaluate && (
-              evalFor === g.id ? (
-                <div className="goal-review-form">
-                  <div className="seg-row" role="radiogroup" aria-label="評価（5段階）">
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <button key={n} role="radio" aria-checked={evalRating === n}
-                        className={`preset-chip ${evalRating === n ? 'sel' : ''}`}
-                        onClick={() => setEvalRating(evalRating === n ? 0 : n)}>★{n}</button>
-                    ))}
-                  </div>
-                  <textarea rows={3} placeholder="評価コメント（本人と会社のメンバーに公開されます）"
-                    value={evalText} onChange={(e) => setEvalText(e.target.value)} />
-                  <div className="form-actions">
-                    <button className="btn-primary" style={{ margin: 0 }}
-                      disabled={!evalText} onClick={() => submitEval(g)}>評価を投稿</button>
-                    <button className="btn-outline" onClick={() => { setEvalFor(null); setEvalRating(0); setEvalText('') }}>キャンセル</button>
-                  </div>
-                </div>
-              ) : (
-                <button className="btn-outline" onClick={() => { setEvalFor(g.id); setEvalRating(0); setEvalText('') }}>評価する</button>
-              )
-            )}
-          </div>
-        ))}
-      </div>
-      {err && <div className="notice warn">{err}</div>}
-    </div>
-  )
-}
-
-/* ---------- ネクストアクション（目標とは別の、直近のやること管理） ---------- */
-const NA_LABEL: Record<NextAction['status'], string> = { todo: '未着手', doing: '進行中', done: '完了' }
-
-function NextActionsCard({ member, me }: { member: Member; me: Member }) {
-  const isSelf = member.id === me.id
-  const [rows, setRows] = useState<NextAction[]>([])
-  const [newTitle, setNewTitle] = useState('')
-  const [err, setErr] = useState('')
-  const [saved, setSaved] = useState(false)
-  const [showDone, setShowDone] = useState(false)
-  const [leaving, setLeaving] = useState<Set<string>>(new Set()) // 完了直後、消えるまでの間の行
-  const composing = useRef(false) // IME変換中はEnterで追加しない
-  const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
-
-  const load = useCallback(async () => {
-    const { data } = await supabase.from('next_actions').select('*')
-      .eq('member_id', member.id).order('created_at')
-    setRows((data as NextAction[] | null) ?? [])
-  }, [member.id])
-
-  useEffect(() => { load() }, [load])
-
-  const flash = () => { setSaved(true); setTimeout(() => setSaved(false), 1500) }
-
-  const patch = (id: string, p: Partial<NextAction>) =>
-    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...p } : r)))
-
-  const save = async (id: string, p: Partial<NextAction>) => {
-    setErr('')
-    const { error } = await supabase.from('next_actions').update(p).eq('id', id)
-    if (error) return setErr('保存できませんでした')
-    flash()
-  }
-
-  const changeStatus = async (r: NextAction, status: NextAction['status']) => {
-    const p = { status, done_at: status === 'done' ? new Date().toISOString() : null }
-    patch(r.id, p)
-    if (status === 'done' && !showDone) {
-      // 打ち消し線を一拍見せてからスッと消す
-      setLeaving((s) => new Set(s).add(r.id))
-      setTimeout(() => setLeaving((s) => { const n = new Set(s); n.delete(r.id); return n }), 900)
-    }
-    await save(r.id, p)
-  }
-  const changeDue = async (r: NextAction, due: string) => {
-    const p = { due_date: due || null }
-    patch(r.id, p); await save(r.id, p)
-  }
-  // 内容・メモは入力停止後に自動保存（モバイルではblurが起きないままタブ移動しがちなため）
-  const patchText = (r: NextAction, field: 'title' | 'note', value: string) => {
-    patch(r.id, { [field]: value })
-    const key = `${r.id}:${field}`
-    clearTimeout(timers.current[key])
-    timers.current[key] = setTimeout(() => {
-      if (field === 'title' && !value.trim()) return
-      save(r.id, { [field]: field === 'title' ? value.trim() : value || null })
-    }, 800)
-  }
-  const flushText = (r: NextAction, field: 'title' | 'note') => {
-    const key = `${r.id}:${field}`
-    clearTimeout(timers.current[key])
-    const value = field === 'title' ? r.title : (r.note ?? '')
-    if (field === 'title' && !value.trim()) return
-    save(r.id, { [field]: field === 'title' ? value.trim() : value || null })
-  }
-
-  const add = async () => {
-    const title = newTitle.trim()
-    if (!title) return
-    setErr('')
-    const { error } = await supabase.from('next_actions').insert({
-      company_id: member.company_id, member_id: member.id,
-      title, status: 'todo', due_date: null, note: null, done_at: null, google_event_id: null,
-      created_at: new Date().toISOString(),
-    })
-    if (error) return setErr(`追加できませんでした（${error.message}）`)
-    setNewTitle('')
-    load()
-  }
-
-  const remove = async (r: NextAction) => {
-    const { error } = await supabase.from('next_actions').delete().eq('id', r.id)
-    if (error) return setErr('削除できませんでした')
-    load()
-  }
-
-  const doneCount = rows.filter((r) => r.status === 'done').length
-  // 完了した行はToDoアプリのように一覧から消す（少しの間打ち消し線で見せてから）。
-  // 「完了を表示」で見返し・未完了への戻しができる
-  const visibleRows = rows.filter((r) => r.status !== 'done' || showDone || leaving.has(r.id))
-
-  if (!isSelf && rows.length === 0) return null
-
-  return (
-    <div className="card card-plain">
-      <h2>
-        ネクストアクション{' '}
-        <span className="tag">{rows.length > 0 ? `${doneCount}/${rows.length} 完了` : '直近のやること'}</span>
-        {saved && <span className="pt-saved">✓ 保存</span>}
-      </h2>
-      {visibleRows.length > 0 && (
-        <div className="plan-table-wrap">
-          <table className="plan-table na-table">
-            <colgroup>
-              <col className="na-col-due" /><col /><col className="na-col-status" /><col className="na-col-note" />
-            </colgroup>
-            <thead>
-              <tr><th>期日</th><th>内容</th><th>ステータス</th><th>メモ</th></tr>
-            </thead>
-            <tbody>
-              {visibleRows.map((r) => (
-                <tr key={r.id} className={`${r.status === 'done' ? 'na-done' : ''} ${leaving.has(r.id) ? 'na-leaving' : ''}`}>
-                  <td className="na-due">
-                    {isSelf ? (
-                      // 表示は月/日だけにして、タップで下の透明なdate入力のピッカーを開く
-                      <label className="na-due-edit">
-                        <span>{r.due_date ? fmtMd(r.due_date) : '—'}</span>
-                        <input type="date" value={r.due_date ?? ''} aria-label="期日"
-                          onChange={(e) => changeDue(r, e.target.value)} />
-                      </label>
-                    ) : (r.due_date ? fmtMd(r.due_date) : '—')}
-                  </td>
-                  <td className="na-title">
-                    {isSelf ? (
-                      <div className="na-title-wrap">
-                        <input type="text" value={r.title} aria-label="内容"
-                          onChange={(e) => patchText(r, 'title', e.target.value)}
-                          onBlur={() => flushText(r, 'title')} />
-                        <button className="pt-break-del na-del" aria-label={`${r.title}を削除`}
-                          onClick={() => remove(r)}>×</button>
-                      </div>
-                    ) : r.title}
-                  </td>
-                  <td>
-                    {isSelf ? (
-                      <select className={`na-status na-${r.status}`} value={r.status} aria-label={`${r.title}のステータス`}
-                        onChange={(e) => changeStatus(r, e.target.value as NextAction['status'])}>
-                        {(['todo', 'doing', 'done'] as const).map((s) => (
-                          <option key={s} value={s}>{NA_LABEL[s]}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className={`badge ${r.status === 'done' ? 'badge-blue' : r.status === 'doing' ? 'badge-green' : 'badge-gray'}`}>
-                        {NA_LABEL[r.status]}
-                      </span>
-                    )}
-                  </td>
-                  <td className="na-note">
-                    {isSelf ? (
-                      <input type="text" value={r.note ?? ''} aria-label="メモ" placeholder="メモ"
-                        onChange={(e) => patchText(r, 'note', e.target.value)}
-                        onBlur={() => flushText(r, 'note')} />
-                    ) : (r.note ?? '')}
-                  </td>
-                </tr>
-              ))}
-              {isSelf && (
-                // 表の最下行から直接追加（Excel風）
-                <tr className="pt-add-row">
-                  <td className="na-due">＋</td>
-                  <td className="na-title">
-                    <input type="text" placeholder="やることを追加" aria-label="やることを追加"
-                      value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
-                      onCompositionStart={() => { composing.current = true }}
-                      onCompositionEnd={() => { composing.current = false }}
-                      onKeyDown={(e) => { if (e.key === 'Enter' && !composing.current && !e.nativeEvent.isComposing) add() }} />
-                  </td>
-                  <td colSpan={2}>
-                    <button className="link-btn" disabled={!newTitle.trim()} onClick={add}>＋追加</button>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {doneCount > 0 && (
-        <button className="na-show-done" onClick={() => setShowDone(!showDone)}>
-          {showDone ? '完了したものを隠す' : `完了した${doneCount}件を表示`}
-        </button>
-      )}
-      {isSelf && (
-        <>
-          {visibleRows.length === 0 && (
-            <div className="draft-times">
-              <input type="text" placeholder="やることを追加" style={{ flex: 1 }}
-                value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
-                onCompositionStart={() => { composing.current = true }}
-                onCompositionEnd={() => { composing.current = false }}
-                // 日本語入力の変換確定Enterでは追加しない
-                onKeyDown={(e) => { if (e.key === 'Enter' && !composing.current && !e.nativeEvent.isComposing) add() }} />
-              <button className="btn-primary" style={{ margin: 0 }} disabled={!newTitle.trim()} onClick={add}>追加</button>
-            </div>
-          )}
-          <div className="notice">目標とは別の、直近のやることリストです。稼働表とは連動しません</div>
-        </>
-      )}
-      {err && <div className="notice warn">{err}</div>}
-    </div>
-  )
-}
-
-/* ---------- フィードバック（プロフィールへの公開投稿） ---------- */
-function FeedbackCard({ target, me, names }: { target: Member; me: Member; names: Record<string, string> }) {
-  const [posts, setPosts] = useState<FeedbackPost[]>([])
-  const [body, setBody] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  const isSelf = target.id === me.id
-
-  const load = useCallback(async () => {
-    const { data } = await supabase.from('feedback_posts').select('*')
-      .eq('target_member_id', target.id).order('created_at', { ascending: false })
-    setPosts((data as FeedbackPost[] | null) ?? [])
-  }, [target.id])
-
-  useEffect(() => { load() }, [load])
-
-  const post = async () => {
-    setErr(''); setBusy(true)
-    const { error } = await supabase.from('feedback_posts').insert({
-      company_id: target.company_id, target_member_id: target.id,
-      author_member_id: me.id, body, created_at: new Date().toISOString(),
-    })
-    setBusy(false)
-    if (error) return setErr(`投稿できませんでした（${error.message}）`)
-    setBody('')
-    load()
-  }
-
-  const remove = async (p: FeedbackPost) => {
-    if (!confirm('この投稿を削除しますか？')) return
-    const { error } = await supabase.from('feedback_posts').delete().eq('id', p.id)
-    if (error) return setErr('削除できませんでした')
-    load()
-  }
-
-  return (
-    <div className="card">
-      <h2>フィードバック <span className="tag">会社のメンバーに公開</span></h2>
-      {!isSelf && (
-        <>
-          <textarea rows={3} placeholder={`${target.name}さんへのフィードバックを書く`}
-            value={body} onChange={(e) => setBody(e.target.value)} />
-          <div className="form-actions">
-            <button className="btn-primary" style={{ margin: 0 }} disabled={!body || busy} onClick={post}>
-              {busy ? '投稿中…' : '投稿'}
-            </button>
-          </div>
-        </>
-      )}
-      {posts.length === 0 && (
-        <div className="notice">{isSelf ? 'まだフィードバックはありません。届くとここに表示されます' : 'まだフィードバックはありません'}</div>
-      )}
-      <div className="list">
-        {posts.map((p) => (
-          <div key={p.id} className="goal-item">
-            <div className="goal-head">
-              <span className="badge badge-gray">{names[p.author_member_id] ?? '—'}</span>
-              <span className="goal-when">{fmtMd(p.created_at.slice(0, 10))}</span>
-              {p.author_member_id === me.id && (
-                <button className="edit-delete goal-delete" onClick={() => remove(p)}>削除</button>
-              )}
-            </div>
-            <div className="goal-body">{p.body}</div>
-          </div>
-        ))}
-      </div>
-      {err && <div className="notice warn">{err}</div>}
-    </div>
-  )
-}
-
-/* ---------- 他メンバーのプロフィール閲覧（目標＋フィードバック。管理者は評価も） ---------- */
-function MemberProfileView({ member, me, names, onBack, onOpenOffice }: {
-  member: Member; me: Member; names: Record<string, string>; onBack: () => void; onOpenOffice?: () => void
-}) {
-  return (
-    <>
-      <div className="card">
-        <div className="profile-head">
-          <div className="m-avatar profile-avatar">{member.name[0]}</div>
-          <div>
-            <div className="profile-name">{member.name}</div>
-            <div className="m-mail">{member.email}</div>
-            <div className="account-badges">
-              <span className="badge badge-gray">{member.role === 'admin' ? '管理者' : '一般'}</span>
-            </div>
-          </div>
-        </div>
-        <div className="form-actions">
-          <button className="btn-outline" onClick={onBack}>← 戻る</button>
-          {onOpenOffice && <button className="btn-primary" style={{ margin: 0 }} onClick={onOpenOffice}>勤怠・給与を見る（事務管理）</button>}
-        </div>
-      </div>
-      <NextActionsCard member={member} me={me} />
-      <GoalsCard member={member} me={me} names={names} canEvaluate={me.role === 'admin'} />
-      <FeedbackCard target={member} me={me} names={names} />
-    </>
-  )
-}
-
-/* ---------- プロフィールタブ（自分／管理者は組織管理と切り替え） ---------- */
-function ProfilePage({ me, onRename, onOpenMoney }: { me: Member; onRename: (name: string) => void; onOpenMoney?: () => void }) {
-  const isAdmin = me.role === 'admin'
-  const [members, setMembers] = useState<Member[]>([])
-  const [viewing, setViewing] = useState<Member | null>(null)
-  const [orgOpen, setOrgOpen] = useState(false)
-  const [office, setOffice] = useState(false) // 管理者: メンバーの事務管理画面を開いている
-
-  useEffect(() => {
-    supabase.from('members').select('*').eq('company_id', me.company_id).order('created_at')
-      .then(({ data }) => setMembers((data as Member[] | null) ?? []))
-  }, [me.company_id])
-
-  const names = Object.fromEntries(members.map((m) => [m.id, m.name]))
-  const colleagues = members.filter((m) => m.id !== me.id && m.status === 'active')
-
-  if (viewing && office) {
-    return <MemberOffice member={viewing} backLabel={`${viewing.name}のプロフィール`} onBack={() => setOffice(false)} />
-  }
-  if (viewing) {
-    return <div className="flat"><MemberProfileView member={viewing} me={me} names={names} onBack={() => { setViewing(null); setOffice(false) }}
-      onOpenOffice={isAdmin ? () => setOffice(true) : undefined} /></div>
-  }
-
-  // 上から: 自分 → 自分の目標・FB → メンバー（ピープル管理の入口） → 組織設定（管理者・折りたたみ）
+/* ---------- プロフィールタブ（自分／管理者はメンバー管理も） ---------- */
+function ProfilePage({ me, onRename }: { me: Member; onRename: (name: string) => void }) {
   return (
     <div className="flat">
-      <Profile me={me} onRename={onRename} onOpenMoney={onOpenMoney} />
-      <GoalsCard member={me} me={me} names={names} />
-      <FeedbackCard target={me} me={me} names={names} />
-      {colleagues.length > 0 && (
-        <div className="card">
-          <h2>メンバー <span className="tag">{isAdmin ? '目標・ネクストアクション・評価' : '目標を見る・フィードバックを送る'}</span></h2>
-          <div className="member-icons">
-            {colleagues.map((m, i) => (
-              <button key={m.id} className="member-icon" onClick={() => setViewing(m)}>
-                <div className="m-avatar" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>{m.name[0]}</div>
-                <div className="name">{m.name}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      {isAdmin && (
-        <>
-          <button className="btn-outline" style={{ width: '100%', marginBottom: 16 }} aria-expanded={orgOpen}
-            onClick={() => setOrgOpen(!orgOpen)}>組織設定（名簿・招待・時給・請求書） {orgOpen ? '▴' : '▾'}</button>
-          {orgOpen && <Members me={me} />}
-        </>
-      )}
+      <Profile me={me} onRename={onRename} />
+      {me.role === 'admin' && <Members me={me} />}
     </div>
   )
 }
 
-/* ---------- カレンダータブ（稼働予定表＋ネクストアクション） ---------- */
-function CalendarTab({ me, member }: { me: Member; member: Member }) {
-  // ネクストアクション枠は任意（ToDoアプリを別で使う人もいるため）
-  // ponytail: 端末ごとの設定。複数端末で揃えたくなったら members にカラム追加
-  const key = `na-enabled:${me.id}`
-  const [na, setNa] = useState(() => { try { return localStorage.getItem(key) === '1' } catch { return false } })
-  const toggle = (on: boolean) => { setNa(on); try { localStorage.setItem(key, on ? '1' : '0') } catch { /* 保存できなくても表示は切り替える */ } }
-  return (
-    <>
-      {na ? (
-        <>
-          <NextActionsCard member={member} me={me} />
-          <button className="link-btn" onClick={() => toggle(false)}>ネクストアクション枠を外す</button>
-        </>
-      ) : (
-        <button className="btn-outline" onClick={() => toggle(true)}>＋ ネクストアクション枠を追加</button>
-      )}
-      <PlanRows me={member} />
-    </>
-  )
-}
-
-type MemberOfficeInfo = {
-  member_id: string; company_id: string
-  weekly_limit_hours: number | null; monthly_limit_hours: number | null; memo: string | null
-  bank_name: string | null; bank_branch: string | null; bank_account_type: string | null
-  bank_account_number: string | null; bank_account_holder: string | null
-}
-const BLANK_OFFICE = {
-  weekly_limit_hours: null, monthly_limit_hours: null, memo: null, bank_name: null, bank_branch: null,
-  bank_account_type: '普通', bank_account_number: null, bank_account_holder: null,
-}
-
-/* ---------- 事務管理: メンバー1人の月次（確定した勤怠×時給＋承認済み経費）＋タイムカード・カレンダー ---------- */
-function MemberOffice({ member, onBack, backLabel = 'ホーム' }: { member: Member; onBack: () => void; backLabel?: string }) {
-  const [month, setMonth] = useState(today().slice(0, 7))
-  const [atts, setAtts] = useState<Attendance[]>([])
-  const [confirmedDays, setConfirmedDays] = useState<Set<string>>(new Set())
-  const [exps, setExps] = useState<MoneyExpense[]>([])
-  const [inv, setInv] = useState<Invoice | null>(null)
-  const [invView, setInvView] = useState(false)
-  const [view, setView] = useState<'timecard' | 'calendar'>('timecard')
-  const [info, setInfo] = useState<MemberOfficeInfo | null>(null)
-  const [infoErr, setInfoErr] = useState('')
-  const [infoOpen, setInfoOpen] = useState(false)
-
-  const load = useCallback(async () => {
-    const { from, to } = monthRange(month)
-    const [{ data: a }, { data: r }, { data: e }, { data: i }] = await Promise.all([
-      supabase.from('attendances').select('*, breaks(*)').eq('member_id', member.id).gte('work_date', from).lt('work_date', to),
-      supabase.from('daily_reports').select('*').eq('member_id', member.id).gte('work_date', from).lt('work_date', to),
-      supabase.from('money_expenses').select('*').eq('member_id', member.id).eq('scope', 'company')
-        .gte('occurred_on', from).lt('occurred_on', to).order('occurred_on', { ascending: true }),
-      supabase.from('invoices').select('*').eq('member_id', member.id).eq('month', month).maybeSingle(),
-    ])
-    setAtts(((a as Attendance[]) ?? []).filter((x) => x.clock_in && x.clock_out))
-    setConfirmedDays(new Set(((r as ReportRow[]) ?? []).filter((x) => x.confirmed).map((x) => x.work_date)))
-    setExps((e as MoneyExpense[]) ?? [])
-    setInv((i as Invoice | null) ?? null)
-  }, [member.id, month])
-  useEffect(() => {
-    supabase.from('member_office').select('*').eq('member_id', member.id).maybeSingle()
-      .then(({ data, error }) => {
-        if (error) return setInfoErr('上限・メモ・振込先はデータベースの準備が済むと使えます')
-        setInfo((data as MemberOfficeInfo | null) ?? { ...BLANK_OFFICE, member_id: member.id, company_id: member.company_id })
-      })
-  }, [member.id, member.company_id])
-  const saveInfo = async (patch: Partial<MemberOfficeInfo>) => {
-    // 触っただけ（値が同じ）なら書き込まない
-    if (!info || Object.entries(patch).every(([k, v]) => info[k as keyof MemberOfficeInfo] === v)) return
-    const next = { ...info, ...patch }
-    setInfo(next)
-    const { error } = await supabase.from('member_office').upsert(next, { onConflict: 'member_id' })
-    setInfoErr(error ? `保存できませんでした（${error.message}）` : '')
-  }
-  // 今週（月曜始まり）の実働。月をまたいでも今週分は別に取る
-  const [weekMin, setWeekMin] = useState(0)
-  useEffect(() => {
-    supabase.from('attendances').select('*, breaks(*)').eq('member_id', member.id).gte('work_date', weekOf(today()))
-      .then(({ data }) => setWeekMin(((data as Attendance[]) ?? []).filter((a) => a.clock_out).reduce((sum, a) => sum + workedMinutes(a), 0)))
-  }, [member.id])
-  useEffect(() => { load() }, [load])
-
-  const setExpStatus = async (id: string, status: MoneyExpense['status']) => {
-    const { error } = await supabase.from('money_expenses').update({ status }).eq('id', id)
-    if (error) return alert(`更新できませんでした（${error.message}）`)
-    load()
-  }
-
-  if (invView && inv) return <InvoiceView inv={inv} memberName={member.name} onClose={() => setInvView(false)} />
-
-  const confirmed = atts.filter((a) => confirmedDays.has(a.work_date))
-  const unconfirmed = atts.length - confirmed.length
-  const minConfirmed = confirmed.reduce((sum, a) => sum + workedMinutes(a), 0)
-  const minAll = atts.reduce((sum, a) => sum + workedMinutes(a), 0)
-  const pay = Math.round(minConfirmed / 60 * member.hourly_rate)
-  const approved = exps.filter((e) => e.status === 'approved')
-  const pending = exps.filter((e) => e.status === 'submitted')
-  const expTotal = approved.reduce((sum, e) => sum + e.amount, 0)
-  const [y, m] = month.split('-').map(Number)
-  const moveMonth = (d: number) => setMonth(new Date(y, m - 1 + d, 1).toLocaleDateString('sv-SE').slice(0, 7))
-
-  return (
-    <>
-      <div className="office-head">
-        <button className="link-btn" onClick={onBack}>← {backLabel}</button>
-        <h2>{member.name}</h2>
-        <span className="month-nav">
-          <button aria-label="前の月" onClick={() => moveMonth(-1)}>◀</button>
-          <b>{y}年{m}月</b>
-          <button aria-label="次の月" onClick={() => moveMonth(1)}>▶</button>
-        </span>
-      </div>
-
-      <div className="home-stats">
-        <div><span>実働（確定分）</span><b>{hmm(minConfirmed)}</b>{unconfirmed > 0 && <small>全体 {hmm(minAll)}</small>}</div>
-        <div><span>給与{member.hourly_rate > 0 ? `（時給 ${yen(member.hourly_rate)}）` : ''}</span><b>{member.hourly_rate > 0 ? yen(pay) : '給与制'}</b></div>
-        <div><span>経費（承認済み）</span><b>{yen(expTotal)}</b></div>
-        <div className="total"><span>支払合計</span><b>{yen(pay + expTotal)}</b></div>
-      </div>
-
-      {(() => {
-        const overW = info?.weekly_limit_hours && weekMin > info.weekly_limit_hours * 60
-        const overM = info?.monthly_limit_hours && minAll > info.monthly_limit_hours * 60
-        return (info?.weekly_limit_hours || info?.monthly_limit_hours) ? (
-          <div className="limit-row">
-            {info.weekly_limit_hours ? <span className={overW ? 'over' : ''}>今週 {hmm(weekMin)} / 上限 {info.weekly_limit_hours}h</span> : null}
-            {info.monthly_limit_hours ? <span className={overM ? 'over' : ''}>今月 {hmm(minAll)} / 上限 {info.monthly_limit_hours}h</span> : null}
-          </div>
-        ) : null
-      })()}
-
-      {(unconfirmed > 0 || pending.length > 0) && (
-        <div className="list" style={{ marginBottom: 16 }}>
-          {unconfirmed > 0 && (
-            <div className="list-item"><span className="badge badge-yellow">未確定</span>
-              <div className="title">勤怠が確定されていない日が{unconfirmed}日あります（支払合計に含みません）</div></div>
-          )}
-          {pending.map((e) => (
-            <div key={e.id} className="list-item">
-              <span className="badge badge-yellow">経費未確認</span>
-              <div className="title">{e.occurred_on.slice(5).replace('-', '/')} {e.label} {yen(e.amount)}</div>
-              <button className="link-btn" onClick={() => setExpStatus(e.id, 'approved')}>承認</button>
-              <button className="link-btn" onClick={() => setExpStatus(e.id, 'rejected')}>差し戻し</button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="form-actions" style={{ marginBottom: 20 }}>
-        <button className="btn-outline" onClick={() => exportKintaiCsv([member], month)}>出勤簿CSV</button>
-        {inv && <button className="btn-outline" onClick={() => setInvView(true)}>請求書（{inv.status === 'paid' ? '支払済み' : '支払待ち'}）</button>}
-      </div>
-
-      <button className="btn-outline" style={{ width: '100%', marginBottom: 12 }} aria-expanded={infoOpen}
-        onClick={() => setInfoOpen(!infoOpen)}>働く上限・支払メモ・振込先 {infoOpen ? '▴' : '▾'}</button>
-      {infoOpen && (
-        <div className="office-info">
-          {infoErr && <div className="notice warn">{infoErr}</div>}
-          {info && (
-            <>
-              <h3>働く上限</h3>
-              <div className="grid2">
-                <label>週の上限（時間）<input type="number" min={0} defaultValue={info.weekly_limit_hours ?? ''}
-                  onBlur={(e) => saveInfo({ weekly_limit_hours: e.target.value ? Number(e.target.value) : null })} /></label>
-                <label>月の上限（時間）<input type="number" min={0} defaultValue={info.monthly_limit_hours ?? ''}
-                  onBlur={(e) => saveInfo({ monthly_limit_hours: e.target.value ? Number(e.target.value) : null })} /></label>
-              </div>
-              <h3>振込先</h3>
-              <div className="grid2">
-                <label>銀行名<input defaultValue={info.bank_name ?? ''} placeholder="○○銀行"
-                  onBlur={(e) => saveInfo({ bank_name: e.target.value || null })} /></label>
-                <label>支店名<input defaultValue={info.bank_branch ?? ''} placeholder="○○支店"
-                  onBlur={(e) => saveInfo({ bank_branch: e.target.value || null })} /></label>
-                <label>種別<select defaultValue={info.bank_account_type ?? '普通'}
-                  onChange={(e) => saveInfo({ bank_account_type: e.target.value })}>
-                  <option>普通</option><option>当座</option></select></label>
-                <label>口座番号<input inputMode="numeric" defaultValue={info.bank_account_number ?? ''}
-                  onBlur={(e) => saveInfo({ bank_account_number: e.target.value || null })} /></label>
-                <label>口座名義（カナ）<input defaultValue={info.bank_account_holder ?? ''}
-                  onBlur={(e) => saveInfo({ bank_account_holder: e.target.value || null })} /></label>
-              </div>
-              <h3>支払いメモ</h3>
-              <label><textarea defaultValue={info.memo ?? ''} placeholder="例: 月末締め翌月25日払い、交通費は上限1万円"
-                onBlur={(e) => saveInfo({ memo: e.target.value || null })} /></label>
-              <div className="notice">管理者と本人だけが見られます</div>
-            </>
-          )}
-        </div>
-      )}
-
-      <div className="seg-row" role="tablist" aria-label="表の切り替え">
-        <button role="tab" aria-selected={view === 'timecard'} className={`preset-chip ${view === 'timecard' ? 'sel' : ''}`}
-          onClick={() => setView('timecard')}>タイムカード</button>
-        <button role="tab" aria-selected={view === 'calendar'} className={`preset-chip ${view === 'calendar' ? 'sel' : ''}`}
-          onClick={() => setView('calendar')}>カレンダー</button>
-      </div>
-      {view === 'timecard' ? <KintaiTable me={member} /> : <PlanRows me={member} />}
-    </>
-  )
-}
-
-/* ---------- 管理者はカレンダー／タイムカードの上でメンバーを切り替えて見る ---------- */
+/* ---------- 管理者はタイムカードの上でメンバーを切り替えて見る ---------- */
 function MemberSwitch({ me, children }: { me: Member; children: (m: Member) => React.ReactNode }) {
   const [members, setMembers] = useState<Member[]>([])
   const [id, setId] = useState(me.id)
@@ -3690,11 +1269,6 @@ const ICONS: Record<Tab, React.ReactNode> = {
       <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
     </svg>
   ),
-  calendar: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="5" width="18" height="17" rx="2" /><path d="M3 10h18M8 2v5M16 2v5" />
-    </svg>
-  ),
   profile: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" />
@@ -3702,10 +1276,9 @@ const ICONS: Record<Tab, React.ReactNode> = {
   ),
 }
 
-// 4つ目は全員プロフィール（管理者はプロフィール内の上タブで組織管理＝旧名簿へ）
+// 管理者のメンバー管理はプロフィール内
 const tabsFor = (_role: Member['role']): { key: Tab; label: string }[] => [
   { key: 'home', label: 'ホーム' },
-  { key: 'calendar', label: 'カレンダー' },
   { key: 'timecard', label: 'タイムカード' },
   { key: 'profile', label: 'プロフィール' },
 ]
@@ -3713,7 +1286,6 @@ const tabsFor = (_role: Member['role']): { key: Tab; label: string }[] => [
 /* ---------- デモ（/demo・データはインメモリ） ---------- */
 function DemoApp() {
   const [tab, setTab] = useState<Tab>('home')
-  const [office, setOffice] = useState<Member | null>(null) // ホームのメンバーアイコンから開いた事務画面
   const switchable = DEMO_MEMBERS.filter((m) => m.status === 'active')
   const [me, setMe] = useState(switchable[0])
   const [open, setOpen] = useState(false)
@@ -3746,13 +1318,12 @@ function DemoApp() {
         </button>
       </header>
       {/* keyで切り替え時に各画面を作り直し、前のユーザーのデータを残さない */}
-      {tab === 'home' && (office ? <MemberOffice key={office.id} member={office} onBack={() => setOffice(null)} /> : <Home key={me.id} me={me} onOpenMember={setOffice} />)}
-      {tab === 'calendar' && <MemberSwitch key={me.id} me={me}>{(m) => <CalendarTab me={me} member={m} />}</MemberSwitch>}
+      {tab === 'home' && <Home key={me.id} me={me} />}
       {tab === 'timecard' && <MemberSwitch key={me.id} me={me}>{(m) => <KintaiTable me={m} />}</MemberSwitch>}
       {tab === 'profile' && <ProfilePage key={me.id} me={me} onRename={(name) => setMe({ ...me, name })} />}
       <nav className="tabbar">
         {tabsFor(me.role).map((t) => (
-          <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => { setOffice(null); setTab(t.key) }}>
+          <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => setTab(t.key)}>
             <span className="icon">{ICONS[t.key]}</span>{t.label}
           </button>
         ))}
@@ -3763,20 +1334,20 @@ function DemoApp() {
 
 function App() {
   const [tab, setTab] = useState<Tab>('home')
-  const [office, setOffice] = useState<Member | null>(null) // ホームのメンバーアイコンから開いた事務画面
   const [session, setSession] = useState<Session | null>(null)
   const [me, setMe] = useState<Member | null>(null)
   const [company, setCompany] = useState<{ id: string; name: string; icon: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [recovering, setRecovering] = useState(false)
-  const [moneyMode, setMoneyMode] = useState(false)
+  // ponytail: 経費管理は削除済み。ヘッダーの経費ボタンは別PRで外すまでsetterだけ残す（押しても何も起きない）
+  const [, setMoneyMode] = useState(false)
 
   const loadMe = useCallback(async (s: Session | null) => {
     if (!s) { setMe(null); setCompany(null); setLoading(false); return }
     // 招待済みレコードがあれば自分のアカウントに紐付け（activate）
     await supabase.from('members')
       .update({ user_id: s.user.id, status: 'active' })
-      .eq('email', s.user.email!).is('user_id', null)
+      .eq('email', s.user.email!).is('user_id', null).eq('status', 'invited')
     const { data } = await supabase.from('members').select('*')
       .eq('user_id', s.user.id).eq('status', 'active').limit(1).maybeSingle()
     setMe(data)
@@ -3814,15 +1385,6 @@ function App() {
     return () => sub.subscription.unsubscribe()
   }, [loadMe])
 
-  // お金管理モード: ヘッダー・タブバーを出さない全画面
-  if (moneyMode && me) {
-    return (
-      <div className="app">
-        <MoneyMode me={me} onClose={() => setMoneyMode(false)} />
-      </div>
-    )
-  }
-
   return (
     <div className="app">
       <header className="header" style={{ visibility: me ? 'visible' : 'hidden' }}>
@@ -3858,16 +1420,14 @@ function App() {
         : !me ? <Onboarding email={session.user.email ?? ''} onDone={() => loadMe(session)} />
         : (
           <>
-            {tab === 'home' && (office ? <MemberOffice key={office.id} member={office} onBack={() => setOffice(null)} /> : <Home key={me.id} me={me} onOpenMember={setOffice} />)}
-            {tab === 'calendar' && <MemberSwitch me={me}>{(m) => <CalendarTab me={me} member={m} />}</MemberSwitch>}
+            {tab === 'home' && <Home key={me.id} me={me} />}
             {tab === 'timecard' && <MemberSwitch me={me}>{(m) => <KintaiTable me={m} />}</MemberSwitch>}
             {tab === 'profile' && (
-              <ProfilePage me={me} onRename={(name) => setMe({ ...me, name })}
-                onOpenMoney={() => setMoneyMode(true)} />
+              <ProfilePage me={me} onRename={(name) => setMe({ ...me, name })} />
             )}
             <nav className="tabbar">
               {tabsFor(me.role).map((t) => (
-                <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => { setOffice(null); setTab(t.key) }}>
+                <button key={t.key} className={`tab ${tab === t.key ? 'active' : ''}`} onClick={() => setTab(t.key)}>
                   <span className="icon">{ICONS[t.key]}</span>{t.label}
                 </button>
               ))}

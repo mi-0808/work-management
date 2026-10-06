@@ -21,7 +21,7 @@ export const DEMO_MEMBERS: Member[] = [
   { id: 'm1', company_id: 'c1', user_id: 'u1', name: '高橋 誠', email: 'takahashi@example.com', member_type: 'internal', role: 'admin', status: 'active', work_start: '09:00:00', work_end: '18:00:00', hourly_rate: 0 },
   { id: 'm2', company_id: 'c1', user_id: 'u2', name: '佐藤 美咲', email: 'sato@example.com', member_type: 'internal', role: 'member', status: 'active', work_start: '09:00:00', work_end: '18:00:00', hourly_rate: 1200 },
   { id: 'm3', company_id: 'c1', user_id: 'u3', name: '田中 健太', email: 'tanaka@example.com', member_type: 'internal', role: 'member', status: 'active', work_start: '10:00:00', work_end: '19:00:00', hourly_rate: 1100 },
-  { id: 'm4', company_id: 'c1', user_id: 'u4', name: '鈴木 花子', email: 'suzuki@example.com', member_type: 'external', role: 'member', status: 'active', work_start: '09:30:00', work_end: '16:30:00', hourly_rate: 1300 },
+  { id: 'm4', company_id: 'c1', user_id: 'u4', name: '鈴木 花子', email: 'suzuki@example.com', member_type: 'external', role: 'member', status: 'active', work_start: '09:30:00', work_end: '16:30:00', hourly_rate: 0, contract_amount: 200000 },
   { id: 'm5', company_id: 'c1', user_id: null, name: '山本 大輔', email: 'yamamoto@example.com', member_type: 'internal', role: 'member', status: 'invited', work_start: '09:00:00', work_end: '18:00:00', hourly_rate: 1000 },
 ]
 
