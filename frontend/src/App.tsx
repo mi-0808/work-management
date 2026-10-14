@@ -677,7 +677,7 @@ function DayEditor({ a, confirmed, onSave, onToggleConfirm, onClose }: {
     <form className="ui-stack" onSubmit={(e) => { e.preventDefault(); onSave({ inT, outT, brs }) }}>
       <div className="ui-row">
         <TextField type="time" label="出勤" autoFocus value={inT} onChange={(e) => setIn(e.target.value)} />
-        <TextField type="time" label="退勤" value={outT} onChange={(e) => setOut(e.target.value)} hint={a.clock_out ? undefined : '勤務中'} />
+        <TextField type="time" label="退勤" value={outT} onChange={(e) => setOut(e.target.value)} hint={a.clock_out || !a.clock_in ? undefined : '勤務中'} />
       </div>
       {brs.map((b, i) => (
         <div className="ui-row end" key={i}>
@@ -703,7 +703,7 @@ function KintaiTable({ me }: { me: Member }) {
   const [month, setMonth] = useState(today().slice(0, 7))
   const [err, setErr] = useState('')
   const [savedAt, setSavedAt] = useState('')
-  const [open, setOpen] = useState<string | null>(null) // 開いている日（attendance の id）
+  const [open, setOpen] = useState<string | null>(null) // 開いている日（work_date）
 
   const load = useCallback(async () => {
     const [y, m] = month.split('-').map(Number)
@@ -771,6 +771,8 @@ function KintaiTable({ me }: { me: Member }) {
   }
   // 開いた日の保存: 変わった所だけ書き込む。全部うまくいったら閉じる
   const saveDay = async (a: Attendance, d: DayDraft) => {
+    // 記録のない日を後から入れる時は出勤・退勤の両方を必須にする（勤務中のまま残さない）
+    if (!a.clock_in && (!d.inT || !d.outT)) return setErr('出勤と退勤の両方を入れてください')
     const inChanged = !!d.inT && d.inT !== isoHm(a.clock_in)
     const outChanged = !!d.outT && d.outT !== isoHm(a.clock_out)
     const brsChanged = breaksText(d.brs) !== breaksText(sortedBreaks(a).map((b) => ({ s: isoHm(b.started_at), e: isoHm(b.ended_at) })))
@@ -778,6 +780,10 @@ function KintaiTable({ me }: { me: Member }) {
     let ok = true
     if (inChanged) ok = await saveActual(a.work_date, 'clock_in', d.inT)
     if (ok && outChanged) ok = await saveActual(a.work_date, 'clock_out', d.outT)
+    if (ok && brsChanged && !a.id) { // 新しく作った日は中抜けを付ける前に id を取り直す
+      const { data } = await supabase.from('attendances').select('id').eq('member_id', me.id).eq('work_date', a.work_date).single()
+      a = { ...a, id: data?.id }
+    }
     if (ok && brsChanged) ok = await saveBreaks(a, breaksText(d.brs))
     load()
     if (!ok) return
@@ -801,8 +807,14 @@ function KintaiTable({ me }: { me: Member }) {
   const days = atts.filter((a) => a.clock_in)
   const done = days.filter((d) => d.clock_out)
   const isConfirmed = (a: Attendance) => reps.find((r) => r.work_date === a.work_date)?.confirmed ?? false
-  // 週（月曜始まり）ごとにまとめる。並びは日付順のまま
-  const weeks = days.reduce<[string, Attendance[]][]>((acc, a) => {
+  // その月の今日までの全日を週（月曜始まり）ごとに並べる。記録のない日も「未入力」として出し、後から入れられる
+  const lastDay = month === today().slice(0, 7) ? +today().slice(8) : month < today().slice(0, 7) ? new Date(y, m, 0).getDate() : 0
+  const allDays = Array.from({ length: lastDay }, (_, i): Attendance => {
+    const date = `${month}-${String(i + 1).padStart(2, '0')}`
+    return atts.find((a) => a.work_date === date)
+      ?? { id: '', member_id: me.id, work_date: date, clock_in: null, clock_out: null, auto_in: false, auto_out: false, plan: null, plan_video: null }
+  })
+  const weeks = allDays.reduce<[string, Attendance[]][]>((acc, a) => {
     const wk = weekOf(a.work_date)
     const last = acc[acc.length - 1]
     if (last?.[0] === wk) last[1].push(a)
@@ -823,7 +835,7 @@ function KintaiTable({ me }: { me: Member }) {
         { label: '確定', icon: 'check', value: `${done.filter(isConfirmed).length}/${done.length}` },
       ]} />
       {err && <ErrorMessage>{err}</ErrorMessage>}
-      {days.length === 0 && <p className="ui-secondary ui-center">この月の勤怠記録はありません</p>}
+      {allDays.length === 0 && <p className="ui-secondary ui-center">この月の勤怠記録はありません</p>}
       {weeks.map(([wk, list]) => (
         <Card key={wk} icon="calendar" title={`${+wk.slice(5, 7)}月${+wk.slice(8)}日〜の週`}
           action={<span className="ui-secondary">合計 {asHm(list.filter((d) => d.clock_out).reduce((sum, d) => sum + workedMinutes(d), 0))}</span>}>
@@ -832,10 +844,10 @@ function KintaiTable({ me }: { me: Member }) {
               const confirmed = isConfirmed(a)
               const dt = new Date(a.work_date + 'T00:00')
               return (
-                <ListRow key={a.id}
+                <ListRow key={a.work_date}
                   leading={<DateChip day={dt.getDate()} weekday={'日月火水木金土'[dt.getDay()]} current={a.work_date === today()} />}
-                  title={`${fmtTime(a.clock_in)} – ${a.clock_out ? fmtTime(a.clock_out) : '勤務中'}`}
-                  subtitle={[
+                  title={a.clock_in ? `${fmtTime(a.clock_in)} – ${a.clock_out ? fmtTime(a.clock_out) : '勤務中'}` : <span className="ui-secondary">未入力</span>}
+                  subtitle={!a.clock_in ? 'タップして稼働時間を入力' : [
                     a.clock_out ? `実働 ${workedLabel(a)}` : '',
                     a.breaks?.length ? `中抜け ${fmtBreaks(a)}` : '',
                     a.auto_in || a.auto_out ? '自動補完あり' : '',
@@ -843,8 +855,8 @@ function KintaiTable({ me }: { me: Member }) {
                   trailing={savedAt === a.work_date
                     ? <span role="status"><Badge tone="primary" icon="check">保存しました</Badge></span>
                     : confirmed ? <Badge icon="check">確定</Badge> : undefined}
-                  expanded={open === a.id} onClick={() => setOpen(open === a.id ? null : a.id)}>
-                  {open === a.id && (
+                  expanded={open === a.work_date} onClick={() => { setErr(''); setOpen(open === a.work_date ? null : a.work_date) }}>
+                  {open === a.work_date && (
                     <DayEditor a={a} confirmed={confirmed} onSave={(d) => saveDay(a, d)}
                       onToggleConfirm={() => toggleConfirm(a)} onClose={() => setOpen(null)} />
                   )}
